@@ -65,6 +65,7 @@ const ERROR_TEXT: Record<string, string> = {
   self_modification: "Anda tidak bisa mengubah peran atau menonaktifkan akun sendiri.",
   self_approval: "Anda tidak bisa menyetujui koreksi milik sendiri.",
   already_reviewed: "Permintaan ini sudah ditinjau.",
+  self_deletion: "Anda tidak bisa menghapus absensi Anda sendiri.",
   correction_out_of_range: "Jam koreksi berada di luar batas shift.",
   correction_order: "Jam check-out harus setelah jam check-in.",
   validation_failed: "Data yang diisi tidak valid.",

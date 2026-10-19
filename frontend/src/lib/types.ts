@@ -16,6 +16,7 @@ export type Permission =
   | "attendance:read_all"
   | "correction:review"
   | "correction:apply_direct"
+  | "attendance:delete"
   | "reports:read"
   | "users:read"
   | "users:manage"

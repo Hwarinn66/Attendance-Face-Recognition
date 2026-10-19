@@ -8,7 +8,7 @@ import { TrendChart } from "@/components/TrendChart";
 import { Card, ErrorState, Field, Input, PageHeader, Spinner, StatCard } from "@/components/ui";
 import { api } from "@/lib/api";
 import { RequirePermission, useAuth } from "@/lib/auth";
-import { BIOMETRIC_LABEL, todayIso } from "@/lib/format";
+import { BIOMETRIC_LABEL, formatTime, todayIso } from "@/lib/format";
 import type { Overview } from "@/lib/types";
 
 export default function HrOverviewPage() {
@@ -28,7 +28,12 @@ function Overview() {
     <>
       <PageHeader
         title="Ringkasan hari ini"
-        description={can("attendance:read_all") ? "Semua karyawan" : "Bawahan langsung Anda"}
+        description={
+          <>
+            {can("attendance:read_all") ? "Semua karyawan" : "Bawahan langsung Anda"}
+            {q.data && <span data-testid="overview-updated"> · diperbarui {formatTime(new Date(q.dataUpdatedAt).toISOString())}</span>}
+          </>
+        }
         actions={
           <Field label="Hari" htmlFor="ov-day">
             <Input id="ov-day" type="date" className="h-9 w-44" value={day} max={todayIso()} onChange={(e) => setDay(e.target.value || todayIso())} />

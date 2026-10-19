@@ -73,3 +73,54 @@ test("settings include the activity (audit) log", async ({ page }) => {
   await page.getByRole("tab", { name: "Log aktivitas" }).click();
   await expect(page.getByRole("table", { name: "Daftar kejadian" })).toContainText("auth.login.success");
 });
+
+test("administrators can delete an invalid attendance record with a reason", async ({ page }) => {
+  await login(page, "admin");
+  await page.goto("/hr/attendance");
+  const row = page.getByRole("row").filter({ hasText: "Lee Leaver" });
+  await expect(row).toHaveCount(1);
+  await row.getByRole("button", { name: "Hapus" }).click();
+  await page.getByRole("button", { name: "Hapus absensi" }).click();
+  await expect(page.getByText("Tulis alasan penghapusan (minimal 5 karakter).")).toBeVisible();
+  await page.getByLabel("Alasan penghapusan").fill("Absen dari luar kantor");
+  await page.getByRole("button", { name: "Hapus absensi" }).click();
+  await expect(page.getByRole("row").filter({ hasText: "Lee Leaver" })).toHaveCount(0);
+  await page.goto("/admin/settings?tab=activity");
+  await expect(page.getByRole("table", { name: "Daftar kejadian" })).toContainText("attendance.record.deleted");
+});
+
+test("the dashboard updates live while the administrator watches, without a reload", async ({ page, playwright, baseURL }) => {
+  const s = seed();
+  await login(page, "admin");
+  await expect(page.locator("aside [data-live-status]")).toHaveAttribute("data-live-status", "live");
+  const stat = (label: string) => page.getByText(label, { exact: true }).locator("xpath=following-sibling::p[1]");
+  const pendingBefore = Number(await stat("Koreksi menunggu").textContent());
+  const checkedInBefore = Number(await stat("Sudah check-in").textContent());
+  await page.evaluate(() => ((window as unknown as { __sameDocument: boolean }).__sameDocument = true));
+
+  // The employee, in the mobile app, asks for a correction of today's check-in.
+  const app = await playwright.request.newContext({ baseURL });
+  const token = (await (await app.post("/api/v1/auth/token", { data: { login: s.users.employee, password: s.password } })).json()).access_token as string;
+  const auth = { Authorization: `Bearer ${token}` };
+  const status = await (await app.get("/api/v1/attendance/status", { headers: auth })).json();
+  const occ = (status.today as { shift_name: string; shift_id: string; shift_date: string }[]).find((o) => o.shift_name === "Current shift")!;
+  const corr = await app.post("/api/v1/attendance/corrections", {
+    headers: auth,
+    data: { shift_id: occ.shift_id, shift_date: occ.shift_date, requested_check_in_at: new Date(Date.now() - 60_000).toISOString(), reason: "Kamera HP rusak tadi pagi" },
+  });
+  expect(corr.status()).toBe(201);
+  await expect(page.getByRole("status").filter({ hasText: "Permintaan koreksi baru dari Erin Employee" })).toBeVisible();
+  await expect(stat("Koreksi menunggu")).toHaveText(String(pendingBefore + 1));
+
+  // Approved from another tab: the numbers here follow along.
+  const csrf = (await page.context().cookies()).find((c) => c.name === "absen_csrf")?.value ?? "";
+  const review = await page.request.post(`/api/v1/attendance/corrections/${(await corr.json()).id}/review`, {
+    data: { approve: true },
+    headers: { "X-CSRF-Token": csrf, Origin: new URL(page.url()).origin },
+  });
+  expect(review.status()).toBe(200);
+  await expect(stat("Sudah check-in")).toHaveText(String(checkedInBefore + 1));
+  await expect(stat("Koreksi menunggu")).toHaveText(String(pendingBefore));
+  expect(await page.evaluate(() => (window as unknown as { __sameDocument?: boolean }).__sameDocument)).toBe(true);
+  await app.dispose();
+});

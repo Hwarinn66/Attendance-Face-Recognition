@@ -40,7 +40,7 @@ from app.models.enums import (
     TemplateStatus,
     VerificationDecision,
 )
-from app.services import audit
+from app.services import audit, live
 from app.services.context import RequestContext
 
 logger = logging.getLogger("app.verification")
@@ -350,6 +350,17 @@ def record(
         ctx=ctx,
         details={"purpose": challenge.purpose.value, "reasons": attempt.reason_codes},
     )
+    if not d.accepted and challenge.purpose != ChallengePurpose.ENROLLMENT:
+        # Failed check-in/out face checks show up live on the console (a burst can mean a spoof attempt).
+        live.publish(
+            db,
+            "verification_failed",
+            attempt_id=str(attempt.id),
+            user_id=str(user.id),
+            user_name=user.full_name,
+            purpose=challenge.purpose.value,
+            suspected_spoof=spoof,
+        )
     return attempt
 
 

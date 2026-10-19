@@ -9,13 +9,14 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import admin, attendance, auth, biometrics, health, org, users
+from app.api.v1 import admin, attendance, auth, biometrics, events, health, org, users
 from app.biometrics.runtime import build_runtime
 from app.core.config import Settings, get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import BodySizeLimitMiddleware, RequestIdMiddleware, SecurityHeadersMiddleware
 from app.db.session import dispose_engine, init_engine
+from app.services.live import broadcaster
 
 logger = logging.getLogger("app")
 
@@ -28,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         init_engine(settings)
+        broadcaster.configure(settings.database_url.get_secret_value())
         runtime = build_runtime(settings)
         app.state.biometrics = runtime
         for s in runtime.provider.statuses():
@@ -45,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            broadcaster.stop()
             runtime.shutdown()
             dispose_engine()
 
@@ -60,7 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_error_handlers(app)
 
     api = APIRouter(prefix=settings.api_prefix)
-    for module in (health, auth, users, org, biometrics, attendance, admin):
+    for module in (health, auth, users, org, biometrics, attendance, admin, events):
         api.include_router(module.router)
     app.include_router(api)
 

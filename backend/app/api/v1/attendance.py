@@ -25,6 +25,7 @@ from app.schemas.attendance import (
     CorrectionReviewIn,
     ExceptionOut,
     OccurrenceOut,
+    RecordDeleteIn,
 )
 from app.schemas.biometrics import ChallengeCreateIn, ChallengeOut, VerificationOut
 from app.schemas.common import Page
@@ -39,6 +40,7 @@ router = APIRouter(prefix="/attendance", tags=["attendance"])
 SelfService = Annotated[AuthContext, Depends(require(Permission.SELF_SERVICE))]
 TeamRead = Annotated[AuthContext, Depends(require(Permission.ATTENDANCE_READ_TEAM))]
 CorrectionReview = Annotated[AuthContext, Depends(require(Permission.CORRECTION_REVIEW))]
+AttendanceDelete = Annotated[AuthContext, Depends(require(Permission.ATTENDANCE_DELETE))]
 MAX_RANGE_DAYS = 370
 
 
@@ -258,6 +260,15 @@ def list_records(
     s, e = _range(start, end)
     rows, total = attendance.list_records(db, auth.user, user_id=user_id, start=s, end=e, limit=limit, offset=offset)
     return Page(items=[record_out(r) for r in rows], total=total, limit=limit, offset=offset)
+
+
+@router.delete("/records/{record_id}", status_code=204)
+def delete_record(
+    record_id: uuid.UUID, body: RecordDeleteIn, auth: AttendanceDelete, db: DbDep, ctx: ContextDep
+) -> Response:
+    """Administrators remove an invalid record; a reason is required and a full snapshot is audited."""
+    attendance.delete_record(db, auth.user, record_id, body.reason, ctx)
+    return Response(status_code=204)
 
 
 @router.get("/exceptions", response_model=list[ExceptionOut])

@@ -42,6 +42,16 @@ Legend: ✅ done and verified by an executed command · 🟡 partially verified 
 
 ## Log
 
+### 2026-10-19
+* Delete attendance: administrators remove an invalid record with a reason (`DELETE /attendance/records/{id}`).
+  A full snapshot goes to the audit log, and pending corrections for that occurrence are rejected.
+* Live dashboard: PostgreSQL NOTIFY in the business transaction → per-process LISTEN thread → SSE
+  (`GET /events/attendance`) → the web refetches and shows a pop-up.
+* Checked through the Next.js dev proxy with `curl -N`: the event arrived about 0.1 s after the NOTIFY, so there
+  was no buffering.
+* Passed: ruff, mypy, pytest (170), frontend lint, typecheck, Vitest (29), and Playwright (9). The Playwright
+  run includes a test that the counts change without a reload.
+
 ### 2026-10-16
 * Repository was empty. Portable PostgreSQL 17.11 (zonky, SHA-1 verified) set up under `.local/` (port 55432).
 * Weights verified against upstream hashes; MiniFASNet converted with torch 2.14.1 (parity ≤ 1.2e-7).

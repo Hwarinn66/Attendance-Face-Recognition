@@ -43,7 +43,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `"${python}" -m alembic upgrade head && "${python}" scripts/seed_e2e.py && "${python}" -m uvicorn --factory app.main:app_factory --host 127.0.0.1 --port ${API_PORT}`,
+      command: `"${python}" -m alembic upgrade head && "${python}" scripts/seed_e2e.py && "${python}" -m uvicorn --factory app.main:app_factory --host 127.0.0.1 --port ${API_PORT} --timeout-graceful-shutdown 5`,
       cwd: BACKEND,
       url: `http://127.0.0.1:${API_PORT}/api/v1/health/live`,
       timeout: 180_000,

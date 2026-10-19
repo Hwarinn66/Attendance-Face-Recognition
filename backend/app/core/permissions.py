@@ -15,6 +15,8 @@ class Permission(enum.StrEnum):
     ATTENDANCE_READ_ALL = "attendance:read_all"
     CORRECTION_REVIEW = "correction:review"
     CORRECTION_APPLY_DIRECT = "correction:apply_direct"
+    # Remove an invalid record (e.g. checked in while not at work). Audited with a full snapshot.
+    ATTENDANCE_DELETE = "attendance:delete"
     REPORTS_READ = "reports:read"
     USERS_READ = "users:read"
     USERS_MANAGE = "users:manage"

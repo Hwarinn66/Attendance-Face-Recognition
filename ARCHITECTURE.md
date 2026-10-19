@@ -68,6 +68,21 @@ POST /attendance/check-in  (Idempotency-Key, {challenge_id, location?})
 POST /attendance/check-out  … → lock open record (FOR UPDATE OF attendance_records) → metrics
 ```
 
+### Live dashboard (`services/live.py`, `api/v1/events.py`)
+```
+commit of check-in/out, correction (requested/applied/approved/rejected), record deletion, failed face check
+   pg_notify('attendance_events', {kind, at, ids, name, status}) in the SAME transaction
+   → PostgreSQL delivers it only on COMMIT (a rolled-back action never appears)
+each backend process: one listener thread (sync psycopg, LISTEN) while ≥ 1 console is connected
+   → fan-out to per-connection asyncio queues (call_soon_threadsafe; a full queue drops its oldest event)
+GET /events/attendance  text/event-stream, attendance:read_all; auth on a short-lived DB session
+   "event: attendance" per change · ": ping" every 15 s · stream ends after 120 s → browser reconnects
+web: AppShell → useLiveUpdates → refetch overview/records/exceptions/summary/corrections/attempts/audit
+   (batched 300 ms) + pop-up; refetch on reconnect; 30 s polling while the stream is unavailable
+```
+psycopg's async connection does not run on Windows' default (Proactor) event loop, hence the thread.
+NOTIFY goes to every listening process, so this works unchanged with several uvicorn workers or hosts.
+
 ### Attendance rule engine (`services/attendance/rules.py`)
 Pure functions over `ShiftPolicy` (local wall-clock start/end + window offsets) and UTC instants. A shift
 occurrence is anchored to the local date it **starts**; overnight shifts end the next day. Local→UTC uses
@@ -115,8 +130,9 @@ The web app is the **administration console only**; attendance and face enrollme
   * `admin/settings` (tabs: general, activity log)
   * `account` (own password)
 * `components/`: accessible primitives on native elements; `panels/` (reports, face checks, activity log);
-  `TrendChart`; `CorrectionDialog`.
-* `lib/`: the `api.ts` client (CSRF and error envelope), the `auth.tsx` permission context, and formatting.
+  `TrendChart`; `CorrectionDialog`; `LiveUpdates` (EventSource hook, status badge, pop-ups).
+* `lib/`: the `api.ts` client (CSRF and error envelope), the `auth.tsx` permission context, formatting, and
+  `live.ts` (live event parsing and Indonesian pop-up text).
 
 ## Testing seams
 

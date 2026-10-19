@@ -12,15 +12,18 @@ import { useAuth } from "@/lib/auth";
 import { ROLE_LABEL } from "@/lib/format";
 import type { HealthReady } from "@/lib/types";
 
+import { LiveIndicator, LiveToasts, useLiveUpdates } from "./LiveUpdates";
 import { visibleNav } from "./nav";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const sections = visibleNav(me.permissions);
+  const live = useLiveUpdates({ enabled: can("attendance:read_all") && !me.must_change_password, myId: me.id });
+  const showLive = can("attendance:read_all");
   const health = useQuery({ queryKey: ["health"], queryFn: () => api<HealthReady>("/health/ready"), staleTime: 60_000 });
   const logout = useMutation({
     mutationFn: () => api("/auth/logout", { method: "POST" }),
@@ -65,7 +68,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-dvh">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
-        <Brand />
+        <Brand>{showLive && <LiveIndicator status={live.status} />}</Brand>
         <div className="flex-1 overflow-y-auto">{nav}</div>
         <UserFooter name={me.full_name} role={ROLE_LABEL[me.role] ?? me.role} onLogout={() => logout.mutate()} />
       </aside>
@@ -92,6 +95,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Menu className="size-5" aria-hidden />
           </button>
           <span className="font-semibold">Absen</span>
+          {showLive && <LiveIndicator status={live.status} className="ml-auto" />}
         </header>
         {health.data?.checks.test_fixture && (
           <div role="status" className="flex items-center gap-2 border-b border-warning/40 bg-warning-soft px-4 py-2 text-sm text-warning">
@@ -111,17 +115,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+      <LiveToasts toasts={live.toasts} onDismiss={live.dismiss} />
     </div>
   );
 }
 
-function Brand() {
+function Brand({ children }: { children?: ReactNode }) {
   return (
     <div className="flex h-16 items-center gap-2.5 px-5">
       <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-fg">
         <ScanFace className="size-5" aria-hidden />
       </span>
       <span className="text-base font-semibold tracking-tight">Absen</span>
+      {children && <span className="ml-auto">{children}</span>}
     </div>
   );
 }

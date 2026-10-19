@@ -96,6 +96,10 @@ class CorrectionIn(StrictInput):
         return self
 
 
+class RecordDeleteIn(StrictInput):
+    reason: str = Field(min_length=5, max_length=1000)
+
+
 class CorrectionReviewIn(StrictInput):
     approve: bool
     note: str | None = Field(default=None, max_length=2000)

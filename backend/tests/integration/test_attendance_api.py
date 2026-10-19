@@ -379,3 +379,56 @@ def test_my_shifts_returns_only_own_assignments(db, client_factory, clock) -> No
     rows = c.get(f"{API}/attendance/my-shifts").json()
     assert [r["shift_id"] for r in rows] == [str(mine.id)]
     assert {r["user_id"] for r in rows} == {str(me.id)}
+
+
+def test_admin_deletes_invalid_attendance(db, client_factory, clock) -> None:  # type: ignore[no-untyped-def]
+    """An employee checked in while not at work: the administrator removes the record with a reason."""
+    admin = make_user(db, "admin@example.com", role=Role.ADMIN)
+    emp = make_user(db, "emp@example.com")
+    _, shift = schedule(db, [emp, admin])
+    ec, ac = client_factory(), client_factory()
+    login(ec, "emp@example.com")
+    login(ac, "admin@example.com")
+    clock.set(at(7, 0))
+    enroll(ec, clock, identity=1)
+    enroll(ac, clock, identity=2)
+    clock.set(at(8, 0))
+    cid, _ = verify(ec, clock, "check_in", identity=1)
+    rec_id = act(ec, "check-in", cid).json()["id"]
+    cid, _ = verify(ac, clock, "check_in", identity=2)
+    own_id = act(ac, "check-in", cid).json()["id"]
+    # The employee also asks for a correction of that day (still pending).
+    corr = ec.post(
+        f"{API}/attendance/corrections",
+        json={
+            "shift_id": str(shift.id),
+            "shift_date": str(MONDAY),
+            "reason": "Please fix my check-out",
+            "requested_check_in_at": at(8, 0).isoformat(),
+        },
+    )
+    assert corr.status_code == 201, corr.text
+
+    def delete(client, record_id, reason="Checked in from outside the office"):  # type: ignore[no-untyped-def]
+        return client.request("DELETE", f"{API}/attendance/records/{record_id}", json={"reason": reason})
+
+    assert delete(ec, rec_id).status_code == 403  # employees cannot delete
+    assert delete(ac, rec_id, reason="x").status_code == 422  # a reason is required
+    own = delete(ac, own_id)
+    assert own.status_code == 403 and own.json()["error"]["code"] == "self_deletion"
+    assert delete(ac, rec_id).status_code == 204
+    assert delete(ac, rec_id).status_code == 404
+
+    db.expire_all()
+    assert db.get(AttendanceRecord, uuid.UUID(rec_id)) is None
+    assert ec.get(f"{API}/attendance/me").json()["items"] == []
+    ev = db.scalar(select(AuditEvent).where(AuditEvent.action == "attendance.record.deleted"))
+    assert ev is not None and ev.target_id == rec_id
+    assert ev.details["reason"] == "Checked in from outside the office"
+    assert ev.details["record"]["employee"] == "Emp" and ev.details["record"]["check_in_at"]
+    assert ev.details["closed_corrections"] == [corr.json()["id"]]
+    pending = ac.get(f"{API}/attendance/corrections", params={"status": "pending"}).json()["items"]
+    assert pending == []
+    # With the window still open the employee can check in again, this time properly verified.
+    cid, _ = verify(ec, clock, "check_in", identity=1)
+    assert act(ec, "check-in", cid).status_code == 201

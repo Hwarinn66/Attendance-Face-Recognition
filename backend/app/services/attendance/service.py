@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -45,7 +45,7 @@ from app.models.enums import (
     CorrectionStatus,
 )
 from app.schemas.attendance import AttendanceActionIn, CorrectionIn
-from app.services import audit
+from app.services import audit, live
 from app.services.attendance.rules import (
     AssignedPolicy,
     ShiftOccurrence,
@@ -362,6 +362,15 @@ def check_in(
     )
     idem.response_status = 201
     idem.response_body = {"record_id": str(rec.id)}
+    live.publish(
+        db,
+        "check_in",
+        record_id=str(rec.id),
+        user_id=str(user.id),
+        user_name=user.full_name,
+        status=ev.status.value,
+        late_minutes=ev.late_minutes,
+    )
     db.commit()
     return 201, rec
 
@@ -418,6 +427,14 @@ def check_out(
     )
     idem.response_status = 200
     idem.response_body = {"record_id": str(rec.id)}
+    live.publish(
+        db,
+        "check_out",
+        record_id=str(rec.id),
+        user_id=str(user.id),
+        user_name=user.full_name,
+        status=ev.status.value,
+    )
     db.commit()
     return 200, rec
 
@@ -590,6 +607,14 @@ def create_correction(db: Session, actor: User, data: CorrectionIn, ctx: Request
     )
     if data.apply_immediately:
         _apply(db, corr, actor, note="applied directly by authorised staff", ctx=ctx)
+    live.publish(
+        db,
+        "correction_applied" if data.apply_immediately else "correction_requested",
+        correction_id=str(corr.id),
+        user_id=str(user.id),
+        user_name=user.full_name,
+        actor_id=str(actor.id),
+    )
     db.commit()
     return corr
 
@@ -625,6 +650,14 @@ def review_correction(
             target_id=corr.id,
             ctx=ctx,
         )
+    live.publish(
+        db,
+        "correction_approved" if approve else "correction_rejected",
+        correction_id=str(corr.id),
+        user_id=str(corr.user_id),
+        user_name=corr.user.full_name if corr.user else None,
+        actor_id=str(actor.id),
+    )
     db.commit()
     return corr
 
@@ -651,6 +684,77 @@ def _snapshot(rec: AttendanceRecord) -> dict[str, Any]:
             "worked_minutes": rec.worked_minutes,
         }.items()
     }
+
+
+def delete_record(db: Session, actor: User, record_id: uuid.UUID, reason: str, ctx: RequestContext) -> None:
+    """Remove an invalid attendance record (e.g. the employee checked in while not at work).
+
+    The row is deleted so it no longer counts anywhere (reports, CSV, the employee's history), but a full
+    snapshot plus the reason goes to the append-only audit log. Pending correction requests for the same
+    occurrence are closed, so approving one later cannot silently bring the attendance back.
+    """
+    rec = db.scalar(
+        select(AttendanceRecord).where(AttendanceRecord.id == record_id).with_for_update(of=AttendanceRecord)
+    )
+    if rec is None:
+        raise NotFound("Attendance record not found")
+    _scope_check(db, actor, rec.user_id)
+    if rec.user_id == actor.id:
+        raise PermissionDenied("You cannot delete your own attendance record", code="self_deletion")
+    snapshot: dict[str, Any] = {
+        "employee": rec.user.full_name if rec.user else None,
+        "user_id": str(rec.user_id),
+        "shift_id": str(rec.shift_id),
+        "shift_name": rec.shift.name if rec.shift else None,
+        "shift_date": rec.shift_date.isoformat(),
+        **_snapshot(rec),
+        "check_in_distance_m": rec.check_in_distance_m,
+        "check_out_distance_m": rec.check_out_distance_m,
+        "is_corrected": rec.is_corrected,
+        "source": rec.source,
+    }
+    pending = db.scalars(
+        select(AttendanceCorrection)
+        .where(
+            AttendanceCorrection.status == CorrectionStatus.PENDING,
+            or_(
+                AttendanceCorrection.attendance_record_id == rec.id,
+                and_(
+                    AttendanceCorrection.user_id == rec.user_id,
+                    AttendanceCorrection.shift_id == rec.shift_id,
+                    AttendanceCorrection.shift_date == rec.shift_date,
+                ),
+            ),
+        )
+        .with_for_update(of=AttendanceCorrection)
+    ).all()
+    now = utcnow()
+    for corr in pending:
+        corr.status = CorrectionStatus.REJECTED
+        corr.reviewed_by_id = actor.id
+        corr.reviewed_at = now
+        corr.review_note = f"Attendance record deleted by an administrator: {reason}"
+    audit.add(
+        db,
+        category=AuditCategory.ATTENDANCE,
+        action="attendance.record.deleted",
+        actor_id=actor.id,
+        target_type="attendance_record",
+        target_id=rec.id,
+        severity=AuditSeverity.WARNING,
+        ctx=ctx,
+        details={"reason": reason, "record": snapshot, "closed_corrections": [str(c.id) for c in pending]},
+    )
+    live.publish(
+        db,
+        "deleted",
+        record_id=str(rec.id),
+        user_id=str(rec.user_id),
+        user_name=snapshot["employee"],
+        actor_id=str(actor.id),
+    )
+    db.delete(rec)
+    db.commit()
 
 
 def _apply(db: Session, corr: AttendanceCorrection, actor: User, note: str | None, ctx: RequestContext) -> None:

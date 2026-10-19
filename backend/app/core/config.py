@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # Origins allowed to make state-changing requests (Origin header check) and for CORS.
     allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     trust_forwarded_for: bool = False
+    # Live dashboard (Server-Sent Events). A stream ends after this long and the browser reconnects, which
+    # re-checks the session, so a revoked or expired login stops receiving events within this window.
+    live_events_stream_seconds: float = Field(default=120.0, ge=1.0, le=3600.0)
+    live_events_heartbeat_seconds: float = Field(default=15.0, ge=0.5, le=120.0)
 
     # --- rate limits ------------------------------------------------------------------------
     login_max_failures: int = 5

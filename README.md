@@ -109,7 +109,7 @@ Details, thresholds and evaluation results: [docs/BIOMETRICS.md](docs/BIOMETRICS
 
 ```bash
 # terminal 1 — API on http://127.0.0.1:8000 (OpenAPI docs at /api/v1/docs outside production)
-cd backend && uv run uvicorn --factory app.main:app_factory --host 127.0.0.1 --port 8000 --reload
+cd backend && uv run uvicorn --factory app.main:app_factory --host 127.0.0.1 --port 8000 --reload --timeout-graceful-shutdown 5
 
 # terminal 2 — web app on http://127.0.0.1:3000 (proxies /api to API_ORIGIN, default http://127.0.0.1:8000)
 cd frontend && npm run dev
@@ -121,8 +121,18 @@ Two clients, two roles:
   employees too and use it in the same way. Attendance and enrollment endpoints accept only app sessions
   (bearer token), so they cannot be called from a web session either.
 * **Web console**. Administrators only; employee accounts are refused at sign-in. Its menu:
-  * **Overview**
+  * **Overview**: today's counts.
+    * They update **live**, without a page refresh, when someone checks in or out, a correction is filed
+      or reviewed, or a record is deleted. A pop-up names the employee; a face check suspected of using a
+      photo or video raises a warning.
+    * A badge next to the logo shows *Langsung* (live), *Menyambung…* (reconnecting) or *Terputus*
+      (disconnected). While the live stream is unavailable the console refreshes every 30 s instead.
   * **Attendance**: records, exceptions, corrections, reports and CSV export, and face checks.
+    * An administrator can **delete** an invalid record (e.g. someone checked in while not at work), but
+      not their own, and must give a reason.
+    * The record disappears from reports, CSV and the employee's history.
+    * A full copy and the reason stay in the activity log, and pending corrections for that day are
+      rejected.
   * **Users**: profile, sign-in ID and password, shifts and face data, all in one dialog.
   * **Schedules**: shifts, workplaces and holidays.
   * **Settings**: system rules and the activity/audit log.
@@ -150,7 +160,7 @@ Administration stays on the web.
 
 ```bash
 # backend reachable from the Wi-Fi (phone and laptop on the same network, Windows profile "Private")
-cd backend && uv run uvicorn --factory app.main:app_factory --host 0.0.0.0 --port 8000
+cd backend && uv run uvicorn --factory app.main:app_factory --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5
 
 cd mobile
 flutter test                      # unit tests + every screen rendered against a mock backend
@@ -236,3 +246,9 @@ cd frontend && npm run lint && npm run typecheck && npm run build
 * Calibrate match and PAD thresholds on your own cameras and population before go-live (docs/BIOMETRICS.md),
   and get legal review of the biometric consent text for your jurisdiction.
 * Rate limits are database-backed (shared across instances); the quality pre-check limiter is per process.
+* Live dashboard (Server-Sent Events on `/api/v1/events/attendance`):
+  * A reverse proxy must not buffer that path. The response sends `X-Accel-Buffering: no` (honoured by
+    nginx) and `Cache-Control: no-transform`. Proxy idle timeouts must exceed the 15 s heartbeat.
+  * Each backend process holds one extra PostgreSQL connection (`LISTEN`) while at least one console is open.
+  * Streams end every `LIVE_EVENTS_STREAM_SECONDS` (120 s) and the browser reconnects. Still, start uvicorn with
+    `--timeout-graceful-shutdown` (the Dockerfile uses 10 s) so open streams cannot delay a restart.

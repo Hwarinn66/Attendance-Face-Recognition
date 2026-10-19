@@ -100,12 +100,15 @@ function Records({ start, end }: { start: string; end: string }) {
   const { can, me } = useAuth();
   const [offset, setOffset] = useState(0);
   const [dialog, setDialog] = useState<{ userId: string; initial: Partial<CorrectionValues> } | null>(null);
+  const [deleting, setDeleting] = useState<AttendanceRecord | null>(null);
   const q = useQuery({
     queryKey: ["records", start, end, offset],
     queryFn: () => api<Page<AttendanceRecord>>("/attendance/records", { query: { start, end, limit: 50, offset } }),
   });
   const shifts = useShifts();
   const canApply = can("correction:apply_direct");
+  const canDelete = can("attendance:delete");
+  const hasActions = canApply || canDelete;
   return (
     <Card>
       {q.isPending && <Spinner />}
@@ -122,7 +125,7 @@ function Records({ start, end }: { start: string; end: string }) {
                 <Th>Check-in</Th>
                 <Th>Check-out</Th>
                 <Th>Durasi kerja</Th>
-                {canApply && (
+                {hasActions && (
                   <Th>
                     <span className="sr-only">Aksi</span>
                   </Th>
@@ -146,11 +149,16 @@ function Records({ start, end }: { start: string; end: string }) {
                     <CheckOutBadge record={r} />
                   </Td>
                   <Td className="tabular-nums">{formatMinutes(r.worked_minutes)}</Td>
-                  {canApply && (
-                    <Td className="text-right">
-                      {r.user_id !== me.id && (
+                  {hasActions && (
+                    <Td className="whitespace-nowrap text-right">
+                      {r.user_id !== me.id && canApply && (
                         <Button variant="ghost" size="sm" onClick={() => setDialog({ userId: r.user_id, initial: { shift_id: r.shift_id, shift_date: r.shift_date } })}>
                           Koreksi
+                        </Button>
+                      )}
+                      {r.user_id !== me.id && canDelete && (
+                        <Button variant="ghost" size="sm" className="text-danger" onClick={() => setDeleting(r)}>
+                          Hapus
                         </Button>
                       )}
                     </Td>
@@ -162,6 +170,7 @@ function Records({ start, end }: { start: string; end: string }) {
           <Pagination total={q.data.total} limit={q.data.limit} offset={offset} onChange={setOffset} />
         </>
       )}
+      {deleting && <DeleteRecordDialog record={deleting} onClose={() => setDeleting(null)} />}
       {dialog && (
         <CorrectionDialog
           open
@@ -173,6 +182,65 @@ function Records({ start, end }: { start: string; end: string }) {
         />
       )}
     </Card>
+  );
+}
+
+/** Removes an invalid record (e.g. the employee checked in while not at work). The server keeps a full copy
+ * and the reason in the activity log; pending corrections for that day are closed. */
+function DeleteRecordDialog({ record, onClose }: { record: AttendanceRecord; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => api(`/attendance/records/${record.id}`, { method: "DELETE", json: { reason: reason.trim() } }),
+    onSuccess: () => {
+      for (const key of ["records", "exceptions", "summary", "overview", "corrections"]) void qc.invalidateQueries({ queryKey: [key] });
+      onClose();
+    },
+  });
+  function submit() {
+    if (reason.trim().length < 5) {
+      setError("Tulis alasan penghapusan (minimal 5 karakter).");
+      return;
+    }
+    setError(null);
+    mutation.mutate();
+  }
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Hapus catatan absensi?"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>
+            Batal
+          </Button>
+          <Button variant="danger" loading={mutation.isPending} onClick={submit}>
+            Hapus absensi
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-surface-2 p-3 text-sm">
+          <p className="font-medium">{record.user_name}</p>
+          <p className="text-muted">
+            {formatDate(record.shift_date)} · {record.shift_name} · check-in {formatTime(record.check_in_at)}
+            {record.check_out_at ? ` · check-out ${formatTime(record.check_out_at)}` : ""}
+          </p>
+        </div>
+        <Alert tone="warning">
+          Catatan ini akan dihapus dari laporan, ekspor CSV, dan riwayat karyawan, sehingga hari itu dihitung tidak hadir.
+          Salinan lengkapnya beserta alasan tetap tersimpan di Log aktivitas. Permintaan koreksi yang masih menunggu
+          untuk hari itu akan ditolak otomatis.
+        </Alert>
+        {mutation.isError && <Alert tone="danger">{mutation.error instanceof ApiError ? mutation.error.message : "Gagal menghapus absensi"}</Alert>}
+        <Field label="Alasan penghapusan" htmlFor="del-reason" error={error ?? undefined} hint="Contoh: absen dari luar kantor, terlihat tidak hadir di lokasi.">
+          <Textarea id="del-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} invalid={!!error} />
+        </Field>
+      </div>
+    </Dialog>
   );
 }
 
