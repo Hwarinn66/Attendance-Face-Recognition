@@ -12,6 +12,7 @@ import pytest
 
 from app.biometrics.challenge import (
     ChallengeConfig,
+    center_segments,
     compress,
     expected_pattern,
     generate_steps,
@@ -139,15 +140,22 @@ class TestChallengeGeneration:
         with pytest.raises(ValueError):
             generate_steps(3, (PoseState.LEFT,))
 
-    def test_default_settings_exclude_look_up(self) -> None:
+    def test_default_settings_turn_left_and_right_only(self) -> None:
         s = Settings(database_url="postgresql+psycopg://x", biometric_encryption_keys="k:" + "A" * 43 + "=")
-        assert s.challenge_action_states == (PoseState.LEFT, PoseState.RIGHT, PoseState.DOWN)
+        assert s.liveness_challenge == "active"
+        assert s.challenge_action_states == (PoseState.LEFT, PoseState.RIGHT)
+        assert s.challenge_steps == 2
         with pytest.raises(ValueError, match="unknown challenge actions"):
             Settings(
                 database_url="postgresql+psycopg://x",
                 biometric_encryption_keys="k:" + "A" * 43 + "=",
                 challenge_actions="turn_left,spin",
             )
+
+    def test_two_actions_may_repeat_so_more_sequences_exist(self) -> None:
+        lr = (PoseState.LEFT, PoseState.RIGHT)
+        assert len(Counter(tuple(generate_steps(2, lr)) for _ in range(500))) == 4  # LL LR RL RR
+        assert len(Counter(tuple(generate_steps(3, lr)) for _ in range(1000))) == 8
 
     def test_steps_are_not_constant(self) -> None:
         seen = Counter(tuple(generate_steps(3)) for _ in range(2000))
@@ -233,6 +241,32 @@ class TestChallengeValidation:
             None if p is None else Pose(p.yaw + 0.03, p.pitch + 0.12) for p in sequence(expected_pattern(self.steps))
         ]
         assert validate_sequence(shifted, self.steps, CFG).passed
+
+    def test_nodding_is_ignored_in_left_right_challenges(self) -> None:
+        # Measured on a real phone: the head dipped by up to 0.2 pitch while turning.
+        steps = [PoseState.LEFT, PoseState.RIGHT]
+        poses = sequence(expected_pattern(steps))
+        poses[4:4] = [Pose(0.0, 0.7)] * 3  # a held nod between centre and the left turn
+        poses[13:13] = [Pose(0.02, 0.58)] * 3  # centre with a slight downward tilt (within 0.10)
+        r = validate_sequence(poses, steps, CFG)
+        assert r.passed, (r.reason, r.observed)
+        # When a vertical move is part of the challenge, the same nod is still an unrequested movement.
+        updown = [PoseState.LEFT, PoseState.UP]
+        poses = sequence(expected_pattern(updown))
+        poses[4:4] = [Pose(0.0, 0.7)] * 3
+        assert validate_sequence(poses, updown, CFG).reason == "sequence_mismatch"
+
+    def test_left_right_challenge_still_rejects_wrong_direction(self) -> None:
+        steps = [PoseState.LEFT, PoseState.LEFT]
+        wrong = sequence(expected_pattern([PoseState.LEFT, PoseState.RIGHT]))
+        assert validate_sequence(wrong, steps, CFG).reason == "sequence_mismatch"
+        assert validate_sequence(sequence(expected_pattern(steps)), steps, CFG).passed
+
+    def test_center_segments(self) -> None:
+        c, left, right, t = PoseState.CENTER, PoseState.LEFT, PoseState.RIGHT, PoseState.TRANSITION
+        states = [c, c, left, left, t, c, c, right, c, c, right, right, c]
+        # The single RIGHT frame is noise (shorter than min_pose_frames) and does not start a new segment.
+        assert center_segments(states, 2) == [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2]
 
     def test_compress_drops_short_runs_and_merges(self) -> None:
         c, left, t = PoseState.CENTER, PoseState.LEFT, PoseState.TRANSITION

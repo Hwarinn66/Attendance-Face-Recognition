@@ -42,16 +42,6 @@ Legend: ✅ done and verified by an executed command · 🟡 partially verified 
 
 ## Log
 
-### 2026-10-19
-* Delete attendance: administrators remove an invalid record with a reason (`DELETE /attendance/records/{id}`).
-  A full snapshot goes to the audit log, and pending corrections for that occurrence are rejected.
-* Live dashboard: PostgreSQL NOTIFY in the business transaction → per-process LISTEN thread → SSE
-  (`GET /events/attendance`) → the web refetches and shows a pop-up.
-* Checked through the Next.js dev proxy with `curl -N`: the event arrived about 0.1 s after the NOTIFY, so there
-  was no buffering.
-* Passed: ruff, mypy, pytest (170), frontend lint, typecheck, Vitest (29), and Playwright (9). The Playwright
-  run includes a test that the counts change without a reload.
-
 ### 2026-10-16
 * Repository was empty. Portable PostgreSQL 17.11 (zonky, SHA-1 verified) set up under `.local/` (port 55432).
 * Weights verified against upstream hashes; MiniFASNet converted with torch 2.14.1 (parity ≤ 1.2e-7).
@@ -76,3 +66,23 @@ Legend: ✅ done and verified by an executed command · 🟡 partially verified 
   * Passed: ruff, mypy, pytest (154), `pytest -m models` (12), frontend lint, typecheck, Vitest, build, and
     Playwright (8).
   * `check-models` and the HTTP smoke test were not repeated in this round; their results are from earlier today.
+
+### 2026-10-19
+* Delete attendance: administrators remove an invalid record with a reason (`DELETE /attendance/records/{id}`).
+  A full snapshot goes to the audit log, and pending corrections for that occurrence are rejected.
+* Live dashboard: PostgreSQL NOTIFY in the business transaction → per-process LISTEN thread → SSE
+  (`GET /events/attendance`) → the web refetches and shows a pop-up.
+* Checked through the Next.js dev proxy with `curl -N`: the event arrived about 0.1 s after the NOTIFY, so there
+  was no buffering.
+* Passed: ruff, mypy, pytest (170), frontend lint, typecheck, Vitest (29), and Playwright (9). The Playwright
+  run includes a test that the counts change without a reload.
+
+### 2026-10-19 (later)
+* Liveness back on `active`, left/right only, 2 steps; repeats allowed with two actions (4 sequences).
+  Pitch is ignored for movements in left/right challenges.
+* Identity continuity now uses frontal frames only: grouped by segment, with the first and last segments
+  required, and checked by minimum pairwise similarity. The cause was a genuine phone attempt whose
+  turned-face similarity was 0.09.
+* README translated to Indonesian and brought up to date (web is admin-only; app troubleshooting).
+* Passed: ruff, mypy, pytest (177), `pytest -m models` (12), flutter analyze, flutter test (24).
+* **Not yet verified on the phone with the new rules.**

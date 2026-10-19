@@ -128,10 +128,11 @@ class Settings(BaseSettings):
     #           (SECURITY.md); chosen per deployment by the system owner.
     liveness_challenge: Literal["active", "passive"] = "active"
     challenge_passive_min_seconds: float = 2.0
-    challenge_steps: int = Field(default=3, ge=2, le=5)
-    # Movements the server may request. look_up is supported but off by default: with 5-point landmarks it
-    # was not separable from still-face pitch jitter on a phone camera (docs/BIOMETRICS.md, measured).
-    challenge_actions: str = "turn_left,turn_right,look_down"
+    challenge_steps: int = Field(default=2, ge=2, le=5)
+    # Movements the server may request. Default: left/right only. look_up/look_down are supported but off:
+    # on real phone captures most failed challenges came from the vertical steps (look_up was not separable
+    # from still-face pitch jitter with 5-point landmarks), see docs/BIOMETRICS.md.
+    challenge_actions: str = "turn_left,turn_right"
     challenge_ttl_seconds: int = Field(default=60, ge=15, le=300)
     challenge_min_seconds_per_step: float = 1.0
     challenge_yaw_threshold: float = 0.15
@@ -176,7 +177,7 @@ class Settings(BaseSettings):
         if unknown:
             raise ValueError(f"unknown challenge actions: {unknown}; allowed: {sorted(allowed)}")
         if len(set(names)) < 2:
-            raise ValueError("at least two distinct challenge actions are required (no immediate repeats)")
+            raise ValueError("at least two distinct challenge actions are required")
         return ",".join(dict.fromkeys(names))
 
     @model_validator(mode="after")

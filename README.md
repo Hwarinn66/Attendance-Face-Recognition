@@ -1,254 +1,348 @@
-# Absen — face-verified employee attendance
+# Absen — absensi karyawan dengan verifikasi wajah
 
-Web application for employee check-in/check-out with server-side face verification and layered liveness
-checks (capture quality → randomised head-movement challenge → temporal consistency → passive
-anti-spoofing → 1:1 face match), configurable shifts and attendance policy, administration pages, reports,
-audit trail and biometric privacy workflows.
+Sistem absensi karyawan: check-in/check-out lewat **aplikasi HP** dengan verifikasi wajah di server, dan
+**web admin** untuk mengatur shift, pengguna, laporan, dan log aktivitas.
 
-| Part | Stack |
+Verifikasi wajah berlapis dan semuanya diputuskan di server:
+
+1. kualitas gambar;
+2. tantangan **toleh kiri/kanan** acak;
+3. konsistensi antar-frame;
+4. deteksi wajah palsu pasif (PAD);
+5. pencocokan wajah 1:1.
+
+Sistem ini juga mencakup aturan jam kerja yang bisa diatur, jejak audit, dan alur privasi data biometrik.
+
+| Bagian | Teknologi |
 | --- | --- |
 | Backend | Python 3.13, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL 17 |
-| Vision | OpenCV (YuNet detector), ONNX Runtime (SFace / ArcFace-compatible recogniser, MiniFASNet PAD) — CPU only |
-| Frontend | Next.js 16 (App Router), React 19, TypeScript 6 (strict), Tailwind CSS 4, TanStack Query |
-| Tests | pytest + HTTPX, Vitest + Testing Library, Playwright |
+| Visi komputer | OpenCV (detektor YuNet), ONNX Runtime (pengenal SFace / ArcFace, PAD MiniFASNet), cukup CPU |
+| Web admin | Next.js 16 (App Router), React 19, TypeScript 6 (strict), Tailwind CSS 4, TanStack Query |
+| Aplikasi HP | Flutter (Android; iOS butuh Mac + Xcode) |
+| Tes | pytest + HTTPX, Vitest + Testing Library, Playwright, flutter test |
 
-Read next: [ARCHITECTURE.md](ARCHITECTURE.md) · [SECURITY.md](SECURITY.md) ·
-[docs/BIOMETRICS.md](docs/BIOMETRICS.md) · [PROGRESS.md](PROGRESS.md) (what is verified and what is not).
+Bacaan lanjutan (berbahasa Inggris):
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [SECURITY.md](SECURITY.md)
+- [docs/BIOMETRICS.md](docs/BIOMETRICS.md)
+- [PROGRESS.md](PROGRESS.md): apa yang sudah dan belum terverifikasi.
 
-> **Status:** functional and tested (see PROGRESS.md), **not certified production-ready**. The PAD
-> model has not been evaluated on a presentation-attack dataset, and browser capture cannot prove that frames
-> come from a physical camera. Read SECURITY.md before any deployment.
+> **Status:** sudah berfungsi dan dites (lihat PROGRESS.md), tetapi **belum tersertifikasi siap produksi**:
+> - Model PAD belum dievaluasi dengan dataset serangan (foto/video/topeng).
+> - Aplikasi tidak bisa membuktikan bahwa gambar benar-benar berasal dari kamera fisik.
+>
+> Baca SECURITY.md sebelum dipakai sungguhan.
 
 ---
 
-## 1. Prerequisites
+## 1. Kebutuhan
 
-* Python 3.12–3.13 and [uv](https://docs.astral.sh/uv/) ≥ 0.13
-* Node.js ≥ 20.9 (developed with 24) and npm
-* PostgreSQL 17 — either Docker, a local server, or the bundled portable fallback (`scripts/dev_postgres.py`)
-* A webcam and a Chromium, Firefox or Safari browser for the attendance UI
-* No GPU is required.
+* Python 3.12–3.13 dan [uv](https://docs.astral.sh/uv/) ≥ 0.13
+* Node.js ≥ 20.9 (dikembangkan dengan versi 24) dan npm
+* PostgreSQL 17. Pilih salah satu:
+  * Docker;
+  * server lokal;
+  * versi portabel bawaan (`scripts/dev_postgres.py`).
+* Flutter SDK dan Android SDK (Android Studio) untuk membangun aplikasi HP.
+* Tidak perlu GPU.
 
-## 2. Installation
+## 2. Instalasi
 
 ```bash
-cd backend && uv sync          # creates backend/.venv from uv.lock
-cd ../frontend && npm ci       # installs from package-lock.json
+cd backend && uv sync          # membuat backend/.venv dari uv.lock
+cd ../frontend && npm ci       # memasang dependensi dari package-lock.json
+cd ../mobile && flutter pub get
 ```
 
-## 3. Environment configuration
+## 3. Konfigurasi lingkungan
 
-Copy [.env.example](.env.example) to `backend/.env` and fill in real values. Required:
+Salin [.env.example](.env.example) ke `backend/.env`, lalu isi dengan nilai sebenarnya. Variabel wajib:
 
-| Variable | Notes |
+| Variabel | Keterangan |
 | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg://user:pass@host:port/db` |
-| `BIOMETRIC_ENCRYPTION_KEYS` | `kid:base64(32 bytes)`; generate with the command in `.env.example`; keep in a secret manager |
-| `ALLOWED_ORIGINS` | the browser origin(s) of the frontend (HTTPS in production) |
-| `COOKIE_SECURE` | `false` only for `http://localhost` development |
-| `PAD_MODE` | `required` (default; mandatory in production) or `disabled` (development only) |
+| `BIOMETRIC_ENCRYPTION_KEYS` | `kid:base64(32 byte)`. Buat dengan perintah di `.env.example` dan simpan di secret manager. |
+| `ALLOWED_ORIGINS` | origin browser untuk web admin (HTTPS di produksi) |
+| `COOKIE_SECURE` | `false` hanya untuk pengembangan di `http://localhost` |
+| `PAD_MODE` | `required` (bawaan, wajib di produksi) atau `disabled` (hanya untuk pengembangan) |
 
-The backend refuses to start with an unsafe production configuration (insecure cookies, PAD disabled,
-missing/HTTP origins, the test-only fake vision provider, or a seeded dev password).
+Pengaturan liveness, semuanya opsional:
 
-## 4. Database initialisation
+| Variabel | Bawaan | Keterangan |
+| --- | --- | --- |
+| `LIVENESS_CHALLENGE` | `active` | `active` = tantangan gerak kepala acak; `passive` = hanya menatap lurus (lebih lemah) |
+| `CHALLENGE_ACTIONS` | `turn_left,turn_right` | Gerakan yang boleh diminta. `look_up`/`look_down` didukung tetapi nonaktif karena paling sering gagal di HP. |
+| `CHALLENGE_STEPS` | `2` | Jumlah gerakan. Untuk kiri/kanan, 2 langkah memberi 4 kemungkinan urutan; 3 langkah memberi 8. |
 
-With your own PostgreSQL:
+Backend menolak menyala dengan konfigurasi produksi yang tidak aman, yaitu:
+- cookie tidak aman;
+- PAD dimatikan;
+- origin kosong atau masih HTTP;
+- provider visi palsu untuk tes;
+- password seed pengembangan.
+
+## 4. Menyiapkan database
+
+Dengan PostgreSQL sendiri:
 
 ```bash
 cd backend
-uv run alembic upgrade head          # create schema
-uv run alembic check                 # verify models and migrations agree
-uv run python -m app.cli create-admin --email admin@yourcompany.com   # prompts for a strong password
+uv run alembic upgrade head          # membuat skema
+uv run alembic check                 # memastikan model dan migrasi cocok
+uv run python -m app.cli create-admin --email admin@perusahaan.com   # meminta password yang kuat
 ```
 
-Without Docker or a PostgreSQL install (Windows/Linux/macOS x86_64):
+Tanpa Docker atau instalasi PostgreSQL (Windows/Linux/macOS x86_64):
 
 ```bash
-python scripts/dev_postgres.py init   # downloads PostgreSQL 17 (SHA-1 verified), runs on 127.0.0.1:55432
-# connection URLs for DATABASE_URL / TEST_DATABASE_URL / E2E_DATABASE_URL are written to .local/pg.env
+python scripts/dev_postgres.py init   # mengunduh PostgreSQL 17 (SHA-1 diverifikasi), berjalan di 127.0.0.1:55432
+# URL koneksi untuk DATABASE_URL / TEST_DATABASE_URL / E2E_DATABASE_URL ditulis ke .local/pg.env
 python scripts/dev_postgres.py start|stop|status
 ```
 
-Optional development sample data (only when `APP_ENV=development`): set `DEV_SEED_ADMIN_EMAIL` and a strong
-`DEV_SEED_ADMIN_PASSWORD`, then `uv run python -m app.cli seed-dev`. There is no default administrator.
+**Data contoh untuk pengembangan** (hanya saat `APP_ENV=development`):
+1. Isi `DEV_SEED_ADMIN_EMAIL` dan `DEV_SEED_ADMIN_PASSWORD` dengan password yang kuat.
+2. Jalankan `uv run python -m app.cli seed-dev`.
 
-Users can sign in with their email or with an optional user ID (case-insensitive). The command below gives an
-account a user ID together with a temporary password. It skips the password policy, so a short password such
-as `Admin` is accepted, and it is refused unless `APP_ENV=development`. Never use it against a database that
-will be deployed.
+Tidak ada akun administrator bawaan.
+
+**Masuk dengan ID:** pengguna bisa masuk dengan email atau dengan ID login opsional (huruf besar/kecil tidak
+dibedakan).
+- Perintah di bawah memberi sebuah akun ID login sekaligus password sementara.
+- Perintah ini melewati aturan kekuatan password, jadi password pendek seperti `Admin` diterima.
+- Perintah ini ditolak kecuali `APP_ENV=development`. Jangan pernah jalankan pada database yang akan dipakai
+  di produksi.
 
 ```bash
 uv run python -m app.cli dev-set-login --email admin@example.com --username Admin123 --password Admin
 ```
 
-## 5. Model weights and licensing
+## 5. Bobot model dan lisensi
 
-Weights are not committed. Fetch and verify them (SHA-256 against [backend/weights/manifest.json](backend/weights/manifest.json)):
+Bobot model tidak ikut di repo. Unduh dan verifikasi dengan SHA-256 terhadap
+[backend/weights/manifest.json](backend/weights/manifest.json):
 
 ```bash
 cd backend
 uv run python scripts/fetch_models.py
-# One-off PAD conversion (PyTorch is used only here, never at runtime; on Linux add
-#   --index https://download.pytorch.org/whl/cpu to avoid the CUDA wheels):
+# Konversi PAD sekali saja. PyTorch hanya dipakai di sini, tidak saat aplikasi berjalan.
+# Di Linux tambahkan --index https://download.pytorch.org/whl/cpu agar tidak mengunduh versi CUDA.
 uv run --no-project --python 3.13 --with torch==2.14.1 --with onnx==1.23.2 --with onnxscript \
        --with onnxruntime==1.31.0 --with "numpy<3" python scripts/convert_minifasnet.py
-uv run python -m app.cli check-models         # exit 1 if verification would be unavailable
+uv run python -m app.cli check-models         # keluar dengan kode 1 jika verifikasi tidak akan tersedia
 ```
 
-| Role | Model | License |
+| Peran | Model | Lisensi |
 | --- | --- | --- |
-| Detector | OpenCV Zoo YuNet 2023mar | MIT |
-| Recogniser (default) | OpenCV Zoo SFace 2021dec, 128-d | Apache-2.0 |
-| Recogniser (optional) | InsightFace ArcFace (`w600k_mbf`, `--with-arcface`) | **non-commercial research only** |
-| PAD | minivision MiniFASNetV2 + MiniFASNetV1SE (converted to ONNX, parity-checked) | Apache-2.0 |
+| Detektor | OpenCV Zoo YuNet 2023mar | MIT |
+| Pengenal (bawaan) | OpenCV Zoo SFace 2021dec, 128 dimensi | Apache-2.0 |
+| Pengenal (opsional) | InsightFace ArcFace (`w600k_mbf`, `--with-arcface`) | **khusus riset non-komersial** |
+| PAD | minivision MiniFASNetV2 + MiniFASNetV1SE (dikonversi ke ONNX, kesetaraan hasil dicek) | Apache-2.0 |
 
-Details, thresholds and evaluation results: [docs/BIOMETRICS.md](docs/BIOMETRICS.md).
+Rincian, ambang batas, dan hasil evaluasi ada di [docs/BIOMETRICS.md](docs/BIOMETRICS.md).
 
-## 6. Running locally
+## 6. Menjalankan secara lokal
 
 ```bash
-# terminal 1 — API on http://127.0.0.1:8000 (OpenAPI docs at /api/v1/docs outside production)
+# terminal 1: API di http://127.0.0.1:8000 (dokumentasi OpenAPI di /api/v1/docs, kecuali di produksi)
 cd backend && uv run uvicorn --factory app.main:app_factory --host 127.0.0.1 --port 8000 --reload --timeout-graceful-shutdown 5
 
-# terminal 2 — web app on http://127.0.0.1:3000 (proxies /api to API_ORIGIN, default http://127.0.0.1:8000)
+# terminal 2: web admin di http://127.0.0.1:3000 (meneruskan /api ke API_ORIGIN, bawaan http://127.0.0.1:8000)
 cd frontend && npm run dev
 ```
 
-Two clients, two roles:
+Dua aplikasi, dua peran:
 
-* **Mobile app** (`mobile/`). Everyone uses it to enroll their face and check in and out. Administrators are
-  employees too and use it in the same way. Attendance and enrollment endpoints accept only app sessions
-  (bearer token), so they cannot be called from a web session either.
-* **Web console**. Administrators only; employee accounts are refused at sign-in. Its menu:
-  * **Overview**: today's counts.
-    * They update **live**, without a page refresh, when someone checks in or out, a correction is filed
-      or reviewed, or a record is deleted. A pop-up names the employee; a face check suspected of using a
-      photo or video raises a warning.
-    * A badge next to the logo shows *Langsung* (live), *Menyambung…* (reconnecting) or *Terputus*
-      (disconnected). While the live stream is unavailable the console refreshes every 30 s instead.
-  * **Attendance**: records, exceptions, corrections, reports and CSV export, and face checks.
-    * An administrator can **delete** an invalid record (e.g. someone checked in while not at work), but
-      not their own, and must give a reason.
-    * The record disappears from reports, CSV and the employee's history.
-    * A full copy and the reason stay in the activity log, and pending corrections for that day are
-      rejected.
-  * **Users**: profile, sign-in ID and password, shifts and face data, all in one dialog.
-  * **Schedules**: shifts, workplaces and holidays.
-  * **Settings**: system rules and the activity/audit log.
+* **Aplikasi HP** (`mobile/`). Semua orang memakainya untuk mendaftarkan wajah serta check-in dan check-out.
+  - Administrator juga karyawan, jadi mereka absen dengan cara yang sama.
+  - Endpoint absensi dan pendaftaran wajah hanya menerima sesi aplikasi (bearer token), jadi tidak bisa dipanggil
+    dari sesi web.
+* **Web admin**. Khusus administrator; akun karyawan ditolak saat login. Menunya:
+  * **Ringkasan**: angka-angka hari ini.
+    * Angka berubah **langsung (realtime)** tanpa refresh halaman ketika ada yang check-in atau check-out,
+      koreksi diajukan atau ditinjau, atau absensi dihapus.
+    * Muncul notifikasi dengan nama karyawan. Verifikasi wajah yang dicurigai memakai foto atau video
+      memunculkan peringatan.
+    * Lencana di samping logo menunjukkan *Langsung*, *Menyambung…*, atau *Terputus*. Selama koneksi
+      langsung tidak tersedia, web memperbarui data tiap 30 detik.
+  * **Absensi**: catatan absensi, pengecualian, koreksi, laporan dan ekspor CSV, serta pemeriksaan wajah.
+    * Administrator bisa **menghapus** absensi yang tidak sah (misalnya check-in padahal tidak di kantor).
+      Ada dua syarat: bukan absensinya sendiri, dan alasan wajib diisi.
+    * Catatan itu hilang dari laporan, CSV, dan riwayat karyawan.
+    * Salinan lengkap beserta alasannya tetap tersimpan di log aktivitas. Koreksi yang masih menunggu untuk
+      hari itu otomatis ditolak.
+  * **Pengguna**: profil, ID login dan password, shift, serta data wajah, semuanya dalam satu dialog.
+  * **Jadwal**: shift, lokasi kerja, dan hari libur.
+  * **Pengaturan**: aturan sistem dan log aktivitas (audit).
 
-Passwords are stored hashed (Argon2id). An administrator can set or replace a password, and can choose
-whether it must be changed at the next sign-in, but can never view it.
+Password disimpan dalam bentuk hash (Argon2id). Administrator bisa mengatur atau mengganti password, dan
+memilih apakah password itu wajib diganti saat login berikutnya. Password tidak pernah bisa dilihat.
 
-Docker Compose (written but **not verified here** — Docker was unavailable): see the header of
-[docker-compose.yml](docker-compose.yml). `API_ORIGIN` is baked into the frontend at build time.
+Docker Compose sudah ditulis tetapi **belum diverifikasi** karena Docker tidak tersedia saat pengembangan.
+Lihat bagian atas [docker-compose.yml](docker-compose.yml). `API_ORIGIN` ditanamkan ke web admin saat build.
 
-### Mobile app (Flutter, employees) — local trial with the laptop as server
+### Cara verifikasi wajah bekerja
 
-`mobile/` is an Android/iOS app for employees: sign-in, face enrollment, check-in and check-out, and history.
-Administration stays on the web.
+Saat check-in, check-out, atau pendaftaran wajah:
+1. Aplikasi meminta tantangan ke server. Server memilih urutan gerakan secara acak, misalnya *toleh kiri →
+   kembali ke tengah → toleh kanan → kembali ke tengah*.
+2. Aplikasi menampilkan petunjuk dengan panah dan merekam frame wajah. Layar dibuat putih terang supaya wajah
+   tetap tersinari di tempat yang agak gelap.
+3. Frame dikirim ke server, yang memeriksa semuanya:
 
-**How it talks to the backend**
+| Lapisan | Yang diperiksa |
+| --- | --- |
+| Kualitas | wajah terdeteksi, hanya satu orang, cukup besar, di tengah, tidak terlalu gelap/terang/buram |
+| Tantangan gerak | urutan toleh kiri/kanan sesuai permintaan, selalu kembali ke tengah, dengan durasi minimum. Anggukan kecil saat menoleh diabaikan. |
+| Kontinuitas | posisi wajah tidak melompat antar-frame, dan wajah lurus di awal, di antara gerakan, dan di akhir harus orang yang sama |
+| PAD | model MiniFASNet menilai apakah wajah asli atau foto/layar; gagal tertutup jika model tidak tersedia |
+| Pencocokan | wajah lurus dibandingkan dengan template terdaftar milik akun itu (1:1) |
 
-* The app signs in through `POST /api/v1/auth/token` and sends `Authorization: Bearer <token>`. The web app's
-  cookie, CSRF and Origin checks are unchanged.
-* The phone only captures frames. The front-camera stream is converted to upright, un-mirrored JPEGs, and the
-  server makes every decision.
-* Rotation is calibrated automatically: the app tries 0/90/180/270° until `/biometrics/quality-check` finds a face.
+Identitas hanya dinilai dari **wajah lurus**. Pada uji nyata di HP, kemiripan antara wajah yang menoleh dan
+wajah lurus orang yang sama hanya 0,09, jauh di bawah ambang 0,363. Karena itu frame yang menoleh cukup dicek
+kontinuitas posisinya.
 
-**Running the trial**
+Hasil verifikasi hanya bisa dipakai sekali, untuk akun dan sesi itu saja, maksimal 120 detik.
+
+### Aplikasi HP (Flutter) — uji coba dengan laptop sebagai server
+
+`mobile/` adalah aplikasi Android/iOS untuk karyawan: login, pendaftaran wajah, check-in dan check-out, serta
+riwayat. Administrasi tetap di web.
+
+**Cara aplikasi berkomunikasi dengan backend**
+
+* Aplikasi login lewat `POST /api/v1/auth/token` dan mengirim `Authorization: Bearer <token>`. Pemeriksaan
+  cookie, CSRF, dan Origin untuk web tidak berubah.
+* HP hanya merekam frame dan semua keputusan diambil server. Aliran kamera depan diubah menjadi JPEG yang tegak
+  dan tidak dicerminkan.
+* Rotasi dikalibrasi otomatis: aplikasi mencoba 0/90/180/270° sampai `/biometrics/quality-check` menemukan wajah.
+
+**Menjalankan uji coba**
 
 ```bash
-# backend reachable from the Wi-Fi (phone and laptop on the same network, Windows profile "Private")
+# backend bisa diakses dari Wi-Fi (HP dan laptop di jaringan yang sama, profil jaringan Windows "Private")
 cd backend && uv run uvicorn --factory app.main:app_factory --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5
 
 cd mobile
-flutter test                      # unit tests + every screen rendered against a mock backend
-# PNG screenshots of every screen (real Roboto/Material Icons fonts), for design review:
-SCREENSHOT_DIR=/path/to/dir flutter test test/screens_test.dart
+flutter test                      # tes unit + semua layar dirender terhadap backend tiruan
+# Screenshot PNG setiap layar (font Roboto/Material Icons asli) untuk meninjau desain:
+SCREENSHOT_DIR=/path/ke/folder flutter test test/screens_test.dart
 flutter build apk --release       # -> build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Install the APK on the phone. In the app's settings, set the server to `http://<laptop-ip>:8000`.
+Pasang APK di HP, lalu di pengaturan aplikasi isi alamat server dengan `http://<ip-laptop>:8000`.
 
-**Trial-build caveats**
+**Catatan build uji coba**
 
-* The Android manifest enables cleartext HTTP (`usesCleartextTraffic`) only for this LAN trial. Release signing
-  uses the debug key.
-* A real deployment needs an HTTPS server, a proper signing key, and removal of `usesCleartextTraffic`.
-* iOS builds need a Mac with Xcode and an Apple developer account.
-* Geofenced shifts are not supported in the app yet; use the web app for those.
-* Release builds run without R8 (`shrink=false` in `mobile/android/gradle.properties`).
-  * Why: JNI-based plugins (`package:jni`, `shared_preferences_android`) look up Kotlin classes, methods and
-    fields by name from Dart, which R8 cannot see.
-  * What happened with R8 on: renamed classes made the app fail at start-up with `NoSuchMethodError` and then
-    `ClassNotFoundException` (seen on a Samsung Galaxy A56).
-  * Before re-enabling R8, keep every class those packages name in Dart, then check the APK with
-    `apkanalyzer dex packages --defined-only`.
+* Manifest Android mengizinkan HTTP tanpa enkripsi (`usesCleartextTraffic`) hanya untuk uji coba di jaringan
+  lokal ini. Build rilis ditandatangani dengan kunci debug.
+* Untuk penggunaan sungguhan diperlukan:
+  * server HTTPS;
+  * kunci penandatanganan yang benar;
+  * penghapusan `usesCleartextTraffic`.
+* Build iOS membutuhkan Mac dengan Xcode dan akun Apple Developer.
+* Shift dengan geofence (batas lokasi) belum didukung di aplikasi.
+* Build rilis berjalan tanpa R8 (`shrink=false` di `mobile/android/gradle.properties`).
+  * Alasannya: plugin berbasis JNI (`package:jni`, `shared_preferences_android`) mencari kelas, method, dan field
+    Kotlin berdasarkan nama dari Dart, dan R8 tidak bisa melihat pemakaian itu.
+  * Yang terjadi saat R8 aktif: kelas yang diganti namanya membuat aplikasi gagal saat dibuka, dengan
+    `NoSuchMethodError` lalu `ClassNotFoundException` (terlihat di Samsung Galaxy A56).
+  * Sebelum mengaktifkan R8 lagi, pertahankan semua kelas yang disebut paket-paket itu di Dart. Setelah itu periksa
+    APK dengan `apkanalyzer dex packages --defined-only`.
 
-## 7. Tests
+## 7. Tes
 
 ```bash
 cd backend
-uv run pytest                 # unit + integration; needs TEST_DATABASE_URL (database name must end in _test)
-uv run pytest -m models tests/models   # component tests with the REAL models (needs fetched weights)
+uv run pytest                 # unit + integrasi; butuh TEST_DATABASE_URL (nama database harus berakhiran _test)
+uv run pytest -m models tests/models   # tes komponen dengan model ASLI (butuh bobot model yang sudah diunduh)
 
 cd frontend
 npm test                      # Vitest + Testing Library
-npm run e2e                   # Playwright: starts the API in APP_ENV=test with the labelled fake vision
-                              # provider against E2E_DATABASE_URL (must end in _e2e; it is truncated)
+npm run e2e                   # Playwright: menjalankan API dengan APP_ENV=test dan provider visi palsu
+                              # berlabel, terhadap E2E_DATABASE_URL (harus berakhiran _e2e; isinya dikosongkan)
+
+cd mobile
+flutter analyze && flutter test
 ```
 
-Integration and E2E tests use `VISION_PROVIDER=fake`, a clearly labelled **test fixture** that replaces only
-model outputs; quality, challenge, temporal and decision logic run for real. Passing them says nothing about
-real-world biometric accuracy — that is what `pytest -m models` and the evaluation scripts are for:
+Tes integrasi dan E2E memakai `VISION_PROVIDER=fake`, yaitu **data uji** berlabel jelas.
+- Yang diganti hanya keluaran model.
+- Logika kualitas, tantangan, kontinuitas, dan keputusan tetap berjalan sungguhan.
+
+Lulus tes ini **tidak** membuktikan akurasi biometrik di dunia nyata. Untuk itu, pakai `pytest -m models` dan
+skrip evaluasi berikut:
 
 ```bash
-uv run python scripts/evaluate_face_verification.py   # LFW protocol, FAR/FRR/EER (see docs/BIOMETRICS.md)
-uv run python scripts/evaluate_pad.py <dataset-root>   # APCER/BPCER/ACER on a licensed PAD dataset
+uv run python scripts/evaluate_face_verification.py   # protokol LFW, FAR/FRR/EER (lihat docs/BIOMETRICS.md)
+uv run python scripts/evaluate_pad.py <folder-dataset>  # APCER/BPCER/ACER pada dataset PAD berlisensi
 ```
 
-## 8. Lint and type checks
+## 8. Lint dan pemeriksaan tipe
 
 ```bash
 cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy app
 cd frontend && npm run lint && npm run typecheck && npm run build
+cd mobile && flutter analyze
 ```
 
-## 9. Troubleshooting camera access
+## 9. Mengatasi masalah di aplikasi HP
 
-* **"Camera access requires a secure (HTTPS) connection"** — browsers only expose the camera on HTTPS or on
-  `localhost`/`127.0.0.1`. Use HTTPS for any other host.
-* **Permission denied** — re-allow the camera in the site settings (lock icon in the address bar), reload.
-* **Camera in use** — close video-call apps or other tabs using it.
-* **"Couldn't get a clear view"** — even front lighting, face inside the oval, only one person in view,
-  hold still. The preview gives live hints before you press *Begin*.
-* **"Head movements weren't detected in order"** — start facing the camera, move clearly (about 25°), and return
-  to centre after each prompt. The order changes every attempt by design.
+* **Aplikasi tidak bisa terhubung ke server**:
+  * Pastikan HP dan laptop berada di Wi-Fi yang sama.
+  * Pastikan profil jaringan Windows "Private" dan backend berjalan dengan `--host 0.0.0.0`.
+  * IP laptop bisa berubah (misalnya setelah ganti hotspot). Perbarui alamat server di pengaturan aplikasi.
+* **Kamera tidak bisa dibuka**: izinkan akses kamera untuk aplikasi Absen di Pengaturan HP, lalu tutup aplikasi
+  lain yang sedang memakai kamera.
+* **"Wajah tidak terbaca"**:
+  * Pastikan cahaya merata dari depan, wajah di dalam lingkaran, dan hanya satu orang yang terlihat.
+  * Sebelum menekan tombol mulai, layar pratinjau sudah memberi petunjuk.
+* **"Gerakan kepala tidak terdeteksi sesuai urutan"**:
+  * Mulai dengan wajah menghadap lurus.
+  * Putar kepala dengan jelas (sekitar 25°) ke arah panah, lalu kembali ke tengah setiap kali.
+  * Tahan HP tetap diam: yang bergerak kepala, bukan HP.
+  * Urutan gerakan memang selalu berubah di setiap percobaan.
+* **"Verifikasi gagal" berulang kali**: setelah 10 percobaan dalam 15 menit, akun dibatasi sementara. Jika wajah
+  terkunci untuk ditinjau, administrator bisa mereset data wajah di menu **Pengguna**.
 
-## 10. Troubleshooting model weights
+## 10. Mengatasi masalah bobot model
 
-* `check-models` reports `UNAVAILABLE (... not found)` — run `fetch_models.py` (and the conversion step for PAD).
-* `SHA-256 mismatch` — the file is corrupt or not the pinned artifact; delete it and fetch again. The service
-  never loads an unverified model.
-* `/api/v1/health/ready` shows `"verification": "unavailable"` — attendance verification fails closed until the
-  missing model is restored (in production the readiness probe also returns 503).
-* `PAD_MODE=disabled` is rejected in production by design.
+* `check-models` melaporkan `UNAVAILABLE (... not found)`: jalankan `fetch_models.py`, ditambah langkah konversi
+  untuk PAD.
+* `SHA-256 mismatch`: file rusak atau bukan versi yang dipatok. Hapus lalu unduh lagi. Layanan tidak pernah
+  memuat model yang belum terverifikasi.
+* `/api/v1/health/ready` menunjukkan `"verification": "unavailable"`: verifikasi absensi ditolak (gagal tertutup)
+  sampai model yang hilang dipulihkan. Di produksi, readiness probe juga mengembalikan 503.
+* `PAD_MODE=disabled` sengaja ditolak di produksi.
 
-## 11. Production deployment considerations
+## 11. Pertimbangan untuk produksi
 
-* Terminate TLS in front of the frontend; set `COOKIE_SECURE=true` (cookies then use the `__Host-` prefix) and
-  HTTPS `ALLOWED_ORIGINS`. Set `TRUST_FORWARDED_FOR=true` only behind a proxy that overwrites `X-Forwarded-For`.
-* Store `BIOMETRIC_ENCRYPTION_KEYS` in a secret manager; rotate by prepending a new key and running
+**Jaringan dan TLS**
+* Pasang TLS di depan web admin. Set `COOKIE_SECURE=true` (cookie lalu memakai awalan `__Host-`) dan isi
+  `ALLOWED_ORIGINS` dengan alamat HTTPS.
+* Set `TRUST_FORWARDED_FOR=true` hanya di belakang proxy yang menimpa header `X-Forwarded-For`.
+
+**Kunci, data, dan migrasi**
+* Simpan `BIOMETRIC_ENCRYPTION_KEYS` di secret manager. Untuk rotasi, tambahkan kunci baru di depan lalu jalankan
   `python -m app.cli rotate-template-keys`.
-* Run `python -m app.cli purge` daily (retention); back up PostgreSQL with encryption; restrict DB network access.
-* Run migrations as a separate step (`alembic upgrade head`) before rolling out new backend versions.
-* Calibrate match and PAD thresholds on your own cameras and population before go-live (docs/BIOMETRICS.md),
-  and get legal review of the biometric consent text for your jurisdiction.
-* Rate limits are database-backed (shared across instances); the quality pre-check limiter is per process.
-* Live dashboard (Server-Sent Events on `/api/v1/events/attendance`):
-  * A reverse proxy must not buffer that path. The response sends `X-Accel-Buffering: no` (honoured by
-    nginx) and `Cache-Control: no-transform`. Proxy idle timeouts must exceed the 15 s heartbeat.
-  * Each backend process holds one extra PostgreSQL connection (`LISTEN`) while at least one console is open.
-  * Streams end every `LIVE_EVENTS_STREAM_SECONDS` (120 s) and the browser reconnects. Still, start uvicorn with
-    `--timeout-graceful-shutdown` (the Dockerfile uses 10 s) so open streams cannot delay a restart.
+* Jalankan `python -m app.cli purge` setiap hari (retensi data).
+* Cadangkan PostgreSQL dengan enkripsi, dan batasi akses jaringan ke database.
+* Jalankan migrasi sebagai langkah tersendiri (`alembic upgrade head`) sebelum meluncurkan versi backend baru.
+
+**Biometrik dan hukum**
+* Kalibrasi ambang pencocokan dan PAD dengan kamera dan populasi pengguna sendiri sebelum dipakai
+  (docs/BIOMETRICS.md).
+* Mintalah tinjauan hukum atas teks persetujuan biometrik sesuai yurisdiksi Anda.
+
+**Batas percobaan:** disimpan di database sehingga berlaku bersama untuk semua instance, kecuali pembatas
+pemeriksaan kualitas yang berlaku per proses.
+
+**Dashboard realtime** (Server-Sent Events di `/api/v1/events/attendance`):
+* Reverse proxy tidak boleh menahan (buffer) path itu.
+  * Respons sudah mengirim `X-Accel-Buffering: no` (dipatuhi nginx) dan `Cache-Control: no-transform`.
+  * Batas waktu idle proxy harus lebih lama dari heartbeat 15 detik.
+* Setiap proses backend memakai satu koneksi PostgreSQL tambahan (`LISTEN`) selama ada minimal satu web admin
+  yang terbuka.
+* Setiap stream berakhir tiap `LIVE_EVENTS_STREAM_SECONDS` (120 detik) dan browser menyambung ulang. Meski begitu,
+  jalankan uvicorn dengan `--timeout-graceful-shutdown` (Dockerfile memakai 10 detik) agar stream yang terbuka
+  tidak menunda restart.

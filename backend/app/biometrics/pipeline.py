@@ -11,12 +11,12 @@ from typing import Any
 
 import numpy as np
 
-from app.biometrics.challenge import ChallengeConfig, ChallengeResult, validate_sequence
+from app.biometrics.challenge import ChallengeConfig, ChallengeResult, center_segments, validate_sequence
 from app.biometrics.decision import BandPolicy, Reason, pad_gate
 from app.biometrics.pose import estimate_pose
 from app.biometrics.provider import SequenceAnalyzer
 from app.biometrics.quality import QualityThresholds, assess_quality
-from app.biometrics.temporal import centroid, identity_continuity, spatial_continuity
+from app.biometrics.temporal import centroid, min_pairwise_similarity, spatial_continuity
 from app.biometrics.types import (
     Embedding,
     FaceDetection,
@@ -43,12 +43,6 @@ _POSE_TOLERATED = {
     QualityIssue.FACE_TOO_SMALL,
     QualityIssue.FACE_TOO_LARGE,
 }
-_CONTINUITY_BLOCKING = {
-    QualityIssue.BLURRY,
-    QualityIssue.TOO_DARK,
-    QualityIssue.TOO_BRIGHT,
-    QualityIssue.IMPLAUSIBLE_LANDMARKS,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +56,7 @@ class PipelineConfig:
     pad_required: bool
     pad_max_frames: int
     min_frontal_frames: int
-    max_frontal_embeddings: int = 8
-    max_continuity_embeddings: int = 10
+    max_frontal_embeddings: int = 9
     max_multi_face_frames: int = 1
 
 
@@ -158,38 +151,38 @@ def analyze_sequence(
         ev.reasons.append(Reason.DISCONTINUITY)
         return ev
 
-    # Frontal, fully-usable frames -> probe embedding -------------------------------------------------
+    # Frontal, fully-usable frames, by centre segment (start, between movements, end) -> probe ------------
+    # Identity is judged on frontal faces only. On real phone captures the recogniser's similarity between
+    # a turned face (|yaw| ~0.45) and the same person's frontal face fell to 0.09, far below any workable
+    # threshold, so turned frames are covered by spatial continuity (above) instead of embeddings.
     states = ev.challenge.states
-    frontal = [f.index for f in ev.frames if f.usable and states[f.index] == PoseState.CENTER]
+    segment_of = center_segments(states, cfg.challenge.min_pose_frames)
+    by_segment: dict[int, list[int]] = {}
+    for f in ev.frames:
+        if f.usable and states[f.index] == PoseState.CENTER:
+            by_segment.setdefault(segment_of[f.index], []).append(f.index)
+    last_segment = max((segment_of[i] for i, s in enumerate(states) if s == PoseState.CENTER), default=0)
+    frontal = sorted(i for idxs in by_segment.values() for i in idxs)
     ev.details["frontal_frames"] = len(frontal)
-    if len(frontal) < cfg.min_frontal_frames:
+    ev.details["frontal_segments"] = [len(by_segment.get(k, [])) for k in range(last_segment + 1)]
+    # The first and the last frontal views must both be usable: together they bracket every movement.
+    if len(frontal) < cfg.min_frontal_frames or 0 not in by_segment or last_segment not in by_segment:
         ev.reasons.append(Reason.INSUFFICIENT_FRONTAL_FRAMES)
         return ev
-    for idx in _evenly(frontal, cfg.max_frontal_embeddings):
-        det = ev.frames[idx].detection
-        assert det is not None
-        emb = analyzer.embed(images[idx], det)
-        ev.frames[idx].embedding = emb
-        ev.frontal_embeddings.append(emb)
+    per_segment = max(2, -(-cfg.max_frontal_embeddings // len(by_segment)))
+    for seg in sorted(by_segment):
+        for idx in _evenly(by_segment[seg], per_segment):
+            det = ev.frames[idx].detection
+            assert det is not None
+            emb = analyzer.embed(images[idx], det)
+            ev.frames[idx].embedding = emb
+            ev.frontal_embeddings.append(emb)
     ev.probe = centroid(ev.frontal_embeddings)
 
-    # Temporal: identity continuity across the movement frames ----------------------------------
-    moving = [
-        f.index
-        for f in ev.frames
-        if f.detection is not None
-        and f.pose is not None
-        and states[f.index] != PoseState.CENTER
-        and not set(f.issues) & _CONTINUITY_BLOCKING
-    ]
-    cont_embs = []
-    for idx in _evenly(moving, cfg.max_continuity_embeddings):
-        det = ev.frames[idx].detection
-        assert det is not None
-        cont_embs.append(analyzer.embed(images[idx], det))
-    ok_id, worst = identity_continuity(ev.frontal_embeddings + cont_embs, ev.probe, cfg.identity_threshold)
+    # Temporal: identity continuity, every pair of frontal faces must be the same person ---------------
+    worst = min_pairwise_similarity(ev.frontal_embeddings)
     ev.details["identity_continuity_min"] = round(worst, 4)
-    if not ok_id:
+    if worst < cfg.identity_threshold:
         ev.reasons.append(Reason.IDENTITY_INCONSISTENT)
         return ev
 

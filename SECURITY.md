@@ -23,9 +23,9 @@ importantly — what the system **cannot** guarantee.
 | Privilege escalation / IDOR | server-side permission per endpoint; two roles (employee: own data only; admin: everything), data scoping in SQL; no self role change/deactivation; no self-approval of corrections | `test_rbac_matrix`, `test_data_scoping`, `test_employee_cannot_escalate_or_create_users`, `test_corrections_workflow` |
 | Client-asserted results | client sends only frames; liveness/match/attendance decided on the server; unknown JSON fields rejected; client timestamps not accepted | `test_client_cannot_assert_verification`, `test_server_time_is_authoritative` |
 | Replay of a verification | challenges single-use (row lock + state), bound to user, auth session, purpose, TTL 60 s; PASSED result consumable once within 120 s | `test_challenge_replay_and_expiry`, `test_challenge_bound_to_user_and_session`, `test_verification_is_single_use_and_purpose_bound`, `test_verification_expires` |
-| Pre-recorded video | randomised step order (12 sequences for 3 steps with the default actions left/right/down; 36 if `CHALLENGE_ACTIONS` also includes `look_up`), full-sequence validation, minimum elapsed time | `test_wrong_order_fails`, `test_challenge_too_fast_rejected`, `test_replayed_still_photo_fails_active_challenge` (real models) |
+| Pre-recorded video | randomised step order (default left/right, 2 steps, repeats allowed: 4 sequences; 8 with `CHALLENGE_STEPS=3`; 36 for 3 steps over all four movements), full-sequence validation, minimum elapsed time | `test_wrong_order_fails`, `test_left_right_challenge_still_rejects_wrong_direction`, `test_challenge_too_fast_rejected`, `test_replayed_still_photo_fails_active_challenge` (real models) |
 | Print / screen replay | passive PAD (MiniFASNet ensemble) with fail-closed and uncertainty band | real-model sample check only — **no dataset evaluation yet** |
-| Face swap mid-sequence | identity continuity across all embedded frames; spatial continuity | `test_identity_swap_mid_sequence_detected`, `test_frames_from_other_identity_mid_sequence_rejected` |
+| Face swap mid-sequence | every pair of frontal faces (start, between movements, end; the first and last must be usable) must match; turned frames: spatial continuity only, since the recogniser is unreliable there (see Known limitations) | `test_identity_swap_mid_sequence_detected`, `test_identity_swap_in_the_final_frontal_view_detected`, `test_first_and_last_frontal_views_must_be_usable`, `test_frames_from_other_identity_mid_sequence_rejected` |
 | Buddy punching via a second account | 1:N identity-conflict check at enrollment → locked + security event | `test_identity_conflict_blocks_second_account` |
 | Account takeover → re-enroll attacker's face | re-enrollment must match the current template; failure locks for administrator review | `test_reenrollment_must_match_existing_template` |
 | Duplicate / concurrent attendance | idempotency keys; UNIQUE (user, shift, date); `FOR UPDATE` on check-out | `test_concurrent_check_ins_create_one_record`, `test_idempotent_retry_returns_same_record` |
@@ -41,14 +41,24 @@ importantly — what the system **cannot** guarantee.
 
 ## Known limitations (read before deploying)
 
+* **The movement challenge is short: left/right only, 2 steps by default (4 possible sequences).**
+  * It defeats a single static photo or one pre-recorded clip. It does not defeat an attacker who has a
+    clip for each of the 4 sequences and plays the matching one, so PAD remains the main barrier
+    against screen replay.
+  * `CHALLENGE_STEPS=3` gives 8 sequences at the cost of a longer capture.
+  * Vertical movements were dropped because most real failures came from them (docs/BIOMETRICS.md).
+* **Turned faces are not identity-checked.**
+  * The recogniser scored a genuine user's turned face (yaw ≈ 0.45) at 0.09 against their own frontal
+    face, so turned frames cannot be compared reliably.
+  * A swap that appears only while the head is turned, and is gone again in the next frontal view, is
+    caught only by spatial continuity (no jump in box position or scale) and by PAD on the frontal frames.
 * **Passive liveness mode (`LIVENESS_CHALLENGE=passive`) removes the head-movement challenge.**
   * What still runs: PAD, the minimum capture time and identity continuity. A printed photo or a screen
     therefore depends on PAD alone, which is uncalibrated.
   * What is lost: a replayed video, or a digitally injected image of the real person, is no longer
     stopped by an unpredictable prompt. MiniFASNet scored the public `lena.jpg` 0.997 live.
-  * The default is `active`. The trial deployment uses `passive` at the owner's request, after real users
-    could not complete the prompts reliably (docs/BIOMETRICS.md). The server logs a warning at start-up
-    in passive mode.
+  * The default is `active`. The trial ran `passive` on 2026-10-18/19 and is back on `active` (left/right)
+    since 2026-10-19. The server logs a warning at start-up in passive mode.
 
 * **Browser capture is not attestation.** JavaScript cannot prove frames came from a physical camera. A
   virtual camera, a modified client or digital injection can feed arbitrary frames. MiniFASNet looks for

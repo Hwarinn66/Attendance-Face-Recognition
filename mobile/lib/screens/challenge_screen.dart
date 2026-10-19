@@ -530,9 +530,13 @@ class _ChallengeScreenState extends State<ChallengeScreen> with WidgetsBindingOb
   String get _subline => switch (_phase) {
         _Phase.starting => 'Layar dibuat terang untuk menerangi wajah Anda.',
         _Phase.preview => _calibrated && _faceOk
-            ? 'Tekan tombol di bawah, lalu tatap kamera dengan tenang beberapa detik.'
+            ? 'Tekan tombol di bawah, lalu ikuti petunjuk di layar. Gerakkan kepala perlahan, HP tetap diam.'
             : 'Hadapkan wajah ke kamera dan pastikan cahaya cukup. Layar yang terang membantu menerangi wajah.',
-        _Phase.running => 'Jangan gerakkan HP.',
+        _Phase.running => switch (_segment?.kind) {
+            SegmentKind.turnLeft || SegmentKind.turnRight => 'Putar kepalanya saja, HP tetap diam.',
+            SegmentKind.back => 'Hadapkan wajah lurus ke kamera lagi.',
+            _ => 'Jangan gerakkan HP.',
+          },
         _Phase.processing || _Phase.submitting => 'Mohon tunggu sebentar.',
         _Phase.error => _error ?? 'Terjadi masalah pada kamera.',
         _Phase.result => _error ?? (_result?['message'] as String? ?? 'Silakan coba lagi.'),

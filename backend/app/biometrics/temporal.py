@@ -1,8 +1,8 @@
 """Layer D (part) — temporal consistency across the captured sequence.
 
 * Spatial continuity: consecutive face boxes must not jump in position or scale (splices / cuts).
-* Identity continuity: every usable frame must match the sequence's own frontal centroid, so a face
-  cannot be swapped partway through the challenge.
+* Identity continuity: every pair of frontal faces in the sequence (taken from the start, from between
+  the movements and from the end) must be the same person, so a face cannot be swapped partway through.
 """
 
 from __future__ import annotations
@@ -50,7 +50,14 @@ def centroid(embeddings: Sequence[Embedding]) -> Embedding:
     return l2_normalize(np.mean(np.stack([l2_normalize(e) for e in embeddings]), axis=0))
 
 
-def identity_continuity(embeddings: Sequence[Embedding], reference: Embedding, threshold: float) -> tuple[bool, float]:
-    sims = [float(np.dot(l2_normalize(e), reference)) for e in embeddings]
-    worst = min(sims) if sims else 0.0
-    return (bool(sims) and worst >= threshold), worst
+def min_pairwise_similarity(embeddings: Sequence[Embedding]) -> float:
+    """Lowest cosine similarity between any two embeddings (1.0 for fewer than two).
+
+    Pairwise rather than against the mean: two different people mixed half-and-half each sit about 0.7 from
+    their joint centroid, which would pass a centroid comparison, but only ~0 from each other.
+    """
+    if len(embeddings) < 2:
+        return 1.0
+    m = np.stack([l2_normalize(e) for e in embeddings])
+    sims = m @ m.T
+    return float(sims[np.triu_indices(len(m), k=1)].min())

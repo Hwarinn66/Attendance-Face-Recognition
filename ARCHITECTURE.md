@@ -97,8 +97,8 @@ without window enforcement and keep previous values.
 | Session | owner, auth session, purpose, single use, TTL, minimum elapsed time | `challenge_*` (session/challenge) |
 | Frames | 12–90 JPEG/PNG, ≤ 512 KiB and ≤ 1280×960 each, one resolution | `too_few_frames`, `invalid_frame` … (capture) |
 | A Quality | one face, detection score, size, centring, brightness, sharpness, landmark plausibility | `no_face`, `multiple_faces` … (capture) |
-| B Challenge | baseline from first frontal frames; per-frame pose classified **relative to baseline**; compressed state sequence must equal `center, s1, center, s2, center, …`; min frames per pose; max missing ratio/gap. With `LIVENESS_CHALLENGE=passive` the server sends no steps and the pattern is just `center` (steady frontal capture, ≥ 2 s) | `challenge_incomplete`, `challenge_mismatch`, `face_lost` |
-| Temporal | box position/scale continuity; every embedded frame matches the sequence's own frontal centroid | `discontinuity`, `identity_inconsistent` (liveness) |
+| B Challenge | baseline from first frontal frames; per-frame pose classified **relative to baseline**; compressed state sequence must equal `center, s1, center, s2, center, …`; min frames per pose; max missing ratio/gap. Left/right-only challenges ignore pitch for movements (centre tolerance 0.10). With `LIVENESS_CHALLENGE=passive` the server sends no steps and the pattern is just `center` (steady frontal capture, ≥ 2 s) | `challenge_incomplete`, `challenge_mismatch`, `face_lost` |
+| Temporal | box position/scale continuity over all tracked frames; frontal frames grouped by centre segment (first and last required), minimum pairwise similarity ≥ match threshold. Turned frames are not embedded (the recogniser is unreliable there). | `discontinuity`, `insufficient_frontal_frames`, `identity_inconsistent` (liveness) |
 | C PAD | MiniFASNet ensemble on up to 5 frontal frames: pass iff mean ≥ T and min ≥ T − m; spoof iff mean < T − m; else uncertain | `pad_spoof_suspected`, `pad_uncertain`, `pad_unavailable` |
 | Identity | attendance: cosine(probe, template) ≥ T+m accept, < T reject, between → uncertain | `no_match`, `match_uncertain` |
 

@@ -38,7 +38,8 @@ Enrollment of a person never retrains a model: it stores an encrypted centroid o
 | `PAD_THRESHOLD` / margin | 0.80 / 0.10 | **Uncalibrated** conservative engineering default (reference code uses argmax). |
 | Pose: yaw / pitch move thresholds | 0.15 / 0.10 | ≈ 23° / 17° on a generic 3D face model (unit test); still-face jitter measured on public samples: yaw σ 0.015–0.05. |
 | Pose: centre tolerances | 0.07 / 0.06 | Above measured still-face jitter for near-frontal faces. |
-| `CHALLENGE_ACTIONS` | `turn_left,turn_right,look_down` | `look_up` disabled by default after phone measurements (below). |
+| `CHALLENGE_ACTIONS` / `CHALLENGE_STEPS` | `turn_left,turn_right` / 2 | Vertical moves disabled after phone measurements (below). With two actions a step may repeat: 4 sequences. |
+| Centre pitch tolerance, left/right challenges | 0.10 | Pitch never produces a movement there; nods of up to 0.2 while turning were measured (below). |
 | `LIVENESS_CHALLENGE` | `active` | `passive` = steady frontal capture (about 4 s), no movement prompts. Weaker; see SECURITY.md. |
 | Quality (brightness 50–215, Laplacian var ≥ 25, face width 18–80 %) | — | Engineering defaults; adjust per camera. |
 
@@ -115,17 +116,32 @@ What follows from these numbers:
 * **Look-up is off by default.** Its response overlaps still-face jitter. This is expected: 5-point landmarks
   move little in pitch, and a phone held below the face shrinks it further. No threshold separates it from
   noise, so `look_up` is removed from the default `CHALLENGE_ACTIONS`.
-* **Weaker randomisation, accepted as a trade-off.** Three steps over three actions give 12 sequences
-  instead of 36. Set `CHALLENGE_STEPS=4` for 24.
+* **Look-down is off as well (2026-10-19).**
+  * Of the eight active attempts recorded, every `challenge_mismatch`/`incomplete` involved a vertical step
+    or a missing final return.
+  * Users also nodded while turning (pitch up to +0.2), which read as an unrequested `look_down`.
+  * The default is now left/right only. In such challenges pitch never produces a movement, and the centre
+    pitch tolerance widens to 0.10.
+* **Weaker randomisation, accepted as a trade-off.**
+  * With two actions a step may repeat (L C L is two separate turns), giving 2^n sequences: 4 for the
+    default 2 steps, 8 for 3.
+  * Without repeats there would be only two sequences.
 * **A final hold was added to both clients.** Users reacted 0.5–0.7 s after each prompt, which cut off the
   last return to centre. Both clients now add a 1.2 s hold at the end.
-* **A turned head can fail the identity gate.**
+* **A turned head can fail the identity gate, so identity is now judged on frontal frames only.**
   * With the final hold, a later attempt completed the movement sequence correctly, then failed
-    `identity_inconsistent`: at yaw ≈ 0.45 the SFace embedding fell below the continuity threshold against
-    the user's own frontal centroid.
-  * The owner then switched the trial to `LIVENESS_CHALLENGE=passive`.
-  * Before re-enabling `active`, restrict the continuity check to near-frontal frames, or calibrate it
-    per yaw.
+    `identity_inconsistent`: at yaw ≈ 0.45 the SFace similarity to the user's own frontal centroid was
+    **0.09** (threshold 0.363). No threshold that passes this genuine user would still mean anything.
+  * The owner switched the trial to `LIVENESS_CHALLENGE=passive` (2026-10-18). On 2026-10-19 `active` was
+    re-enabled with the fix below.
+  * Fix: frontal frames are grouped by centre segment (start, between movements, end). The first and last
+    segments must contain usable frames, and the **minimum pairwise** similarity over the sampled frontal
+    embeddings must reach the match threshold.
+  * Pairwise rather than against the centroid: two different people mixed half-and-half each sit about
+    0.7 from their joint centroid.
+  * Turned frames are covered by spatial continuity only.
+  * For reference, frontal-only continuity on this phone (passive attempts) was 0.93–0.98 against the
+    centroid.
 * **Re-measure before relying on these values.** This is one person on one device. Re-enable `look_up` only
   after measuring a better pitch estimator.
 

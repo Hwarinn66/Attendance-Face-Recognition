@@ -145,6 +145,19 @@ void main() {
       expect(totalDuration(p), closeTo(4.2, 1e-9)); // >= 2 s server minimum, ~20 frames at 5 fps
     });
 
+    test('left/right challenge, including a repeated turn (server default: 2 steps)', () {
+      final lr = buildTimeline(['turn_left', 'turn_left'], 2.6);
+      expect(lr.map((s) => s.kind).toList(), [
+        SegmentKind.center,
+        SegmentKind.turnLeft,
+        SegmentKind.back,
+        SegmentKind.turnLeft,
+        SegmentKind.back,
+        SegmentKind.hold,
+      ]);
+      expect(totalDuration(lr), closeTo(1.8 + 2 * 2.6 + 1.2, 1e-9)); // ~8 s, ~40 frames at 5 fps (max 90)
+    });
+
     test('unknown steps are rejected', () {
       expect(() => buildTimeline(['spin'], 2.0), throwsArgumentError);
     });

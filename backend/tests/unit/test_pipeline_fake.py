@@ -3,6 +3,8 @@ challenge, temporal and decision code is exercised end-to-end; they do NOT measu
 
 from __future__ import annotations
 
+import cv2
+import numpy as np
 import pytest
 
 from app.biometrics.challenge import ChallengeConfig
@@ -99,10 +101,50 @@ def test_no_face() -> None:
     assert run(frame_set(DARK)).reasons == [Reason.NO_FACE]
 
 
+OTHER = (20, 230, 128)  # another identity bucket
+# 28 frames over the pattern centre, left, centre, down, centre, right, centre: 4 frames each.
+TURNS = (slice(4, 8), slice(12, 16), slice(20, 24))
+
+
+def others(n: int, seed: int = 100) -> list[bytes]:
+    return [colored_frame(OTHER, seed=seed + i) for i in range(n)]
+
+
 def test_identity_swap_mid_sequence_detected() -> None:
     frames = frame_set(LIVE)
-    frames[10:16] = [colored_frame((20, 230, 128), seed=100 + i) for i in range(6)]  # other identity
+    frames[10:16] = others(6)  # the second frontal view and the next movement
     assert run(frames).reasons == [Reason.IDENTITY_INCONSISTENT]
+
+
+def test_identity_swap_in_the_final_frontal_view_detected() -> None:
+    frames = frame_set(LIVE)
+    frames[24:28] = others(4)
+    ev = run(frames)
+    assert ev.reasons == [Reason.IDENTITY_INCONSISTENT]
+    assert ev.details["identity_continuity_min"] < 0.363
+
+
+def test_turned_faces_are_not_compared_by_identity() -> None:
+    # The recogniser is unreliable on turned faces (a genuine user scored 0.09 against their own frontal face
+    # on a real phone), so turned frames are checked for spatial continuity only, never by embedding.
+    frames = frame_set(LIVE)
+    for s in TURNS:
+        frames[s] = others(4, seed=200 + s.start)
+    ev = run(frames)
+    assert ev.reasons == []
+    assert ev.details["frontal_segments"] == [4, 4, 4, 4]
+    assert ev.details["identity_continuity_min"] > 0.99
+
+
+def test_first_and_last_frontal_views_must_be_usable() -> None:
+    ok, buf = cv2.imencode(".jpg", np.full((360, 480, 3), LIVE, dtype=np.uint8))  # flat image: blurry
+    assert ok
+    blurry = bytes(buf.tobytes())
+    frames = frame_set(LIVE)
+    frames[24:28] = [blurry] * 4  # the final centre is tracked (pose) but has no usable face
+    ev = run(frames)
+    assert ev.challenge is not None and ev.challenge.passed
+    assert ev.reasons == [Reason.INSUFFICIENT_FRONTAL_FRAMES]
 
 
 def test_pad_disabled_is_recorded() -> None:

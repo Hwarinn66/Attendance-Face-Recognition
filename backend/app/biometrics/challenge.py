@@ -8,6 +8,7 @@ pose is never sufficient, and extra or out-of-order movements fail the challenge
 
 from __future__ import annotations
 
+import math
 import secrets
 import statistics
 from collections.abc import Sequence
@@ -17,16 +18,25 @@ from app.biometrics.pose import classify_pose
 from app.biometrics.types import CHALLENGE_ACTIONS, Pose, PoseState
 
 _rng = secrets.SystemRandom()
+_MOVEMENTS = frozenset(CHALLENGE_ACTIONS)
+_PITCH_ACTIONS = frozenset({PoseState.UP, PoseState.DOWN})
 
 
 def generate_steps(n_steps: int, actions: Sequence[PoseState] = CHALLENGE_ACTIONS) -> list[PoseState]:
-    """Uniformly random actions with no immediate repetition: k * (k-1)^(n-1) possible sequences for k
-    actions (36 for all four movements and 3 steps, 12 for the default three)."""
-    if len(set(actions)) < 2:
+    """Uniformly random actions.
+
+    With three or more actions none is repeated immediately: k * (k-1)^(n-1) sequences (36 for all four
+    movements and 3 steps). With only two (the default left/right) that rule would leave just two sequences,
+    so repeats are allowed there: 2^n sequences (4 for 2 steps, 8 for 3). A repeat is still two separate
+    movements, because the user returns to centre in between.
+    """
+    distinct = list(dict.fromkeys(actions))
+    if len(distinct) < 2:
         raise ValueError("at least two distinct actions are required")
+    allow_repeat = len(distinct) == 2
     steps: list[PoseState] = []
     for _ in range(n_steps):
-        choices = [a for a in dict.fromkeys(actions) if not steps or a != steps[-1]]
+        choices = [a for a in distinct if allow_repeat or not steps or a != steps[-1]]
         steps.append(_rng.choice(choices))
     return steps
 
@@ -93,6 +103,20 @@ def _runs(states: Sequence[PoseState]) -> list[tuple[PoseState, int]]:
     return runs
 
 
+def center_segments(states: Sequence[PoseState], min_frames: int) -> list[int]:
+    """Per frame, which centre segment it belongs to: 0 = before the first movement, then one more after
+    each held movement (a run of at least ``min_frames``; shorter runs are noise, as in ``compress``)."""
+    out: list[int] = []
+    segment, moved = 0, False
+    for state, n in _runs(states):
+        if state in _MOVEMENTS and n >= min_frames:
+            moved = True
+        elif state == PoseState.CENTER and moved:
+            segment, moved = segment + 1, False
+        out.extend([segment] * n)
+    return out
+
+
 def compress(states: Sequence[PoseState], min_frames: int) -> list[PoseState]:
     """Drop transitions/missing frames and runs shorter than ``min_frames``; merge neighbours."""
     kept = [s for s, n in _runs(states) if s not in (PoseState.TRANSITION, PoseState.MISSING) and n >= min_frames]
@@ -131,6 +155,10 @@ def validate_sequence(
     if abs(baseline.yaw) > cfg.baseline_max_abs_yaw:
         return ChallengeResult(False, "not_centered_at_start", baseline=baseline)
 
+    # Left/right-only challenges do not ask for vertical movement. Real phone captures nodded by up to 0.2
+    # pitch while turning, which would otherwise read as an unrequested look_down; there, pitch only decides
+    # whether a frame is cleanly frontal (a wider tolerance) and never produces a movement.
+    yaw_only = not set(steps) & _PITCH_ACTIONS
     states = [
         PoseState.MISSING
         if p is None
@@ -138,9 +166,9 @@ def validate_sequence(
             p,
             baseline,
             yaw_threshold=cfg.yaw_threshold,
-            pitch_threshold=cfg.pitch_threshold,
+            pitch_threshold=math.inf if yaw_only else cfg.pitch_threshold,
             center_yaw_tol=cfg.center_yaw_tolerance,
-            center_pitch_tol=cfg.center_pitch_tolerance,
+            center_pitch_tol=cfg.pitch_threshold if yaw_only else cfg.center_pitch_tolerance,
         )
         for p in poses
     ]
