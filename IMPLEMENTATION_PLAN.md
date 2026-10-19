@@ -58,7 +58,7 @@ Each milestone ends with the listed verification commands actually being run.
 - Model manifest (URL, SHA-256, license), `scripts/fetch_models.py`, MiniFASNet → ONNX conversion script with parity check.
 - Detector, quality assessor, aligner, recognizers, PAD inference, model registry with load-time validation; inference executor.
 - **Acceptance:** real models load and run on public sample images; missing weights are reported, never faked.
-- **Verify:** `uv run python -m app.cli check-models && uv run pytest -m models`
+- **Verify:** `uv run python -m app.cli check-models && uv run pytest -m models tests/models`
 
 ### M5 — Enrollment & liveness
 - Consent records, enrollment state machine, randomized server challenges bound to user/session/purpose/expiry, frame submission, pose-sequence + temporal validation, PAD, embedding consistency and identity-conflict check, encrypted template storage.
@@ -103,7 +103,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy app
 uv run alembic upgrade head && uv run alembic check
 uv run pytest                    # unit + integration (needs TEST_DATABASE_URL)
-uv run pytest -m models          # real-model component tests (needs weights)
+uv run pytest -m models tests/models   # real-model component tests (needs weights)
 
 # frontend
 cd frontend

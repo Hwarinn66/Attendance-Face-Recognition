@@ -75,7 +75,8 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://unused@localhost/unused
           BIOMETRIC_ENCRYPTION_KEYS: kci:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-      - run: uv run pytest -m models
+      # Only tests/models: collecting tests/integration would require a database this job does not have.
+      - run: uv run pytest -m models tests/models
 
   frontend:
     runs-on: ubuntu-latest

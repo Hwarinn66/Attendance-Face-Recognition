@@ -181,7 +181,7 @@ Install the APK on the phone. In the app's settings, set the server to `http://<
 ```bash
 cd backend
 uv run pytest                 # unit + integration; needs TEST_DATABASE_URL (database name must end in _test)
-uv run pytest -m models       # component tests with the REAL models (needs fetched weights)
+uv run pytest -m models tests/models   # component tests with the REAL models (needs fetched weights)
 
 cd frontend
 npm test                      # Vitest + Testing Library
