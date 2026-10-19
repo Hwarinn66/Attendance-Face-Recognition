@@ -1,0 +1,12 @@
+.venv
+.cache
+.eval-data
+.env
+.env.*
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+weights/*
+!weights/manifest.json
+tests

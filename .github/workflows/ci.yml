@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PG_USER: absen
+  PG_PASSWORD: ci-only-password
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: absen
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: absen_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U absen -d absen_test" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://absen:ci-only-password@127.0.0.1:5432/absen_test
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+      - run: uv sync --frozen --python 3.13
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy app
+      - name: Unit + integration tests (includes alembic downgrade/upgrade/check on the test DB)
+        run: uv run pytest
+
+  backend-models:
+    # Real pretrained weights: download, verify SHA-256, convert PAD to ONNX, run component tests.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+      - uses: actions/cache@v4
+        with:
+          path: backend/weights
+          key: weights-${{ hashFiles('backend/weights/manifest.json', 'backend/scripts/convert_minifasnet.py') }}
+      - run: uv sync --frozen --python 3.13
+      - run: uv run python scripts/fetch_models.py
+      - name: Convert MiniFASNet (torch only for this step)
+        run: |
+          if [ ! -f weights/pad_minifasnet.meta.json ]; then
+            uv run --no-project --python 3.13 --index https://download.pytorch.org/whl/cpu \
+              --with torch==2.14.1 --with onnx==1.23.2 --with onnxscript \
+              --with onnxruntime==1.31.0 --with "numpy<3" python scripts/convert_minifasnet.py
+          fi
+      - run: uv run python -m app.cli check-models
+        env:
+          DATABASE_URL: postgresql+psycopg://unused@localhost/unused
+          BIOMETRIC_ENCRYPTION_KEYS: kci:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      - run: uv run pytest -m models
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: absen
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: absen_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U absen -d absen_e2e" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgresql+psycopg://absen:ci-only-password@127.0.0.1:5432/absen_e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+      - run: uv sync --frozen --python 3.13
+        working-directory: backend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npx playwright test
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report

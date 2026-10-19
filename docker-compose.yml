@@ -1,0 +1,90 @@
+# Single-host deployment. NOT verified in the authoring environment (Docker was not installed);
+# see PROGRESS.md. Secrets come from a .env file next to this compose file.
+#
+#   cp .env.example .env              # set POSTGRES_PASSWORD, BIOMETRIC_ENCRYPTION_KEYS, ALLOWED_ORIGINS
+#   docker compose --profile tools run --rm models   # one-off: fetch + verify + convert model weights
+#   docker compose up -d --build
+#   docker compose exec backend python -m app.cli create-admin --email you@example.com
+#
+# Browser camera access needs HTTPS outside localhost: put a TLS reverse proxy in front of `frontend`.
+
+name: absen
+
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:-production}
+  DATABASE_URL: postgresql+psycopg://absen:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/absen
+  BIOMETRIC_ENCRYPTION_KEYS: ${BIOMETRIC_ENCRYPTION_KEYS:?set BIOMETRIC_ENCRYPTION_KEYS in .env}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set ALLOWED_ORIGINS in .env}
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-true}
+  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+  PAD_MODE: ${PAD_MODE:-required}
+  VISION_PROVIDER: onnx
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: absen
+      POSTGRES_USER: absen
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U absen -d absen"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # No published port: only the backend reaches the database.
+
+  models:
+    profiles: ["tools"]
+    build: ./backend
+    user: "0:0"
+    volumes:
+      - ./backend/weights:/app/weights
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        python scripts/fetch_models.py &&
+        uv run --no-project --index https://download.pytorch.org/whl/cpu --with torch==2.14.1 --with onnx==1.23.2 --with onnxscript
+        --with onnxruntime==1.31.0 --with "numpy<3" python scripts/convert_minifasnet.py
+
+  migrate:
+    build: ./backend
+    environment: *backend-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - ./backend/weights:/app/weights:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        API_ORIGIN: http://backend:8000
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

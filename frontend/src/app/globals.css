@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* Semantic design tokens. Components use only these names, so light/dark themes stay consistent. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --border: #e2e6ec;
+  --border-strong: #cfd5de;
+  --text: #121826;
+  --muted: #5b6475;
+  --primary: #0d6e6e;
+  --primary-hover: #0a5a5a;
+  --primary-fg: #ffffff;
+  --primary-soft: #e3f3f2;
+  --success: #15803d;
+  --success-soft: #e7f6ec;
+  --warning: #a15c07;
+  --warning-soft: #fdf3e2;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --info: #1d4ed8;
+  --info-soft: #e8efff;
+  --ring: #0d6e6e;
+  /* Chart series: validated categorical slots 1-3 (dataviz validator, light surface #ffffff) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --surface: #151b23;
+    --surface-2: #1c232d;
+    --border: #2a333f;
+    --border-strong: #3a4553;
+    --text: #e6eaf0;
+    --muted: #9aa4b2;
+    --primary: #2bb3a8;
+    --primary-hover: #3fc4b9;
+    --primary-fg: #04201e;
+    --primary-soft: #11302e;
+    --success: #4ade80;
+    --success-soft: #11291b;
+    --warning: #f5b454;
+    --warning-soft: #2e2311;
+    --danger: #f87171;
+    --danger-soft: #331718;
+    --info: #7aa2ff;
+    --info-soft: #172240;
+    --ring: #2bb3a8;
+    /* Dark steps of the same hues, validated against the dark surface #151b23 */
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+  --color-primary-soft: var(--primary-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-ring: var(--ring);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+dialog::backdrop {
+  background: rgb(10 14 20 / 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

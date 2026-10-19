@@ -1,0 +1,38 @@
+# secrets & local state
+.env
+.env.*
+!.env.example
+.local/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+backend/.cache/
+backend/.eval-data/
+
+# model weights (fetched + verified by scripts; manifest is committed)
+backend/weights/*
+!backend/weights/manifest.json
+
+# node / next
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/.fixtures/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

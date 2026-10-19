@@ -1,0 +1,75 @@
+{
+  "dataset": {
+    "name": "LFW View 2 (pairs.txt)",
+    "lfw_tgz_sha256": "055f7d9c632d7370e6fb4afc7468d40f970c34a80d4c6f50ffec63f5a8d536c0",
+    "pairs_sha256": "ea42330c62c92989f9d7c03237ed5d591365e89b3e649747777b70e692dc1592",
+    "pairs": 6000,
+    "unique_images": 7701
+  },
+  "pipeline": {
+    "detector": "yunet-2023mar",
+    "recognizer": "sface-2021dec",
+    "embedding_dim": 128,
+    "alignment": "5-point similarity to ArcFace 112x112 template",
+    "score": "cosine similarity"
+  },
+  "failure_to_acquire": {
+    "images": 0,
+    "rate": 0.0,
+    "pairs_affected": 0
+  },
+  "at_match_threshold": {
+    "threshold": 0.363,
+    "FRR": 0.016666666666666666,
+    "FRR_95ci": [
+      0.01267,
+      0.0219
+    ],
+    "false_rejects": 50,
+    "genuine_pairs": 3000,
+    "FAR": 0.0006666666666666666,
+    "FAR_95ci": [
+      0.00018,
+      0.00243
+    ],
+    "false_accepts": 2,
+    "impostor_pairs": 3000
+  },
+  "at_accept_boundary": {
+    "threshold": 0.413,
+    "FRR": 0.029666666666666668,
+    "FRR_95ci": [
+      0.02417,
+      0.03637
+    ],
+    "false_rejects": 89,
+    "genuine_pairs": 3000,
+    "FAR": 0.0,
+    "FAR_95ci": [
+      0.0,
+      0.00128
+    ],
+    "false_accepts": 0,
+    "impostor_pairs": 3000,
+    "note": "scores in [threshold, threshold+margin) are 'uncertain -> retry'; counted as not accepted"
+  },
+  "eer": {
+    "value": 0.00867,
+    "threshold": 0.296
+  },
+  "far_0.1pct": {
+    "threshold": 0.3525,
+    "FRR": 0.014333333333333333
+  },
+  "ten_fold_accuracy": {
+    "mean": 0.99317,
+    "std": 0.00383
+  },
+  "score_stats": {
+    "genuine_mean": 0.6515,
+    "impostor_mean": 0.0844,
+    "impostor_max": 0.4036
+  },
+  "runtime_seconds": 2236.3,
+  "hardware_note": "CPU only (ONNX Runtime CPUExecutionProvider)"
+}
